@@ -26,6 +26,8 @@ const (
 // Styles holds every visual role used by the TUI. Only the five config colors
 // are user-configurable; the remaining roles use built-in defaults.
 type Styles struct {
+	Bg        lipgloss.Style
+	Fg        lipgloss.Style
 	Base      lipgloss.Style
 	Dim       lipgloss.Style
 	Accent    lipgloss.Style
@@ -52,8 +54,16 @@ func NewStyles(colors config.Colors) Styles {
 	playing := colorValue(colors.Playing, defaultPlaying)
 	invalid := colorValue(colors.Error, defaultError)
 
+	// The terminal's own background and foreground are the defaults; these
+	// roles exist so panes can opt into explicit styling later without
+	// inventing colors outside the config surface.
+	bg := lipgloss.NewStyle().Background(lipgloss.NoColor{})
+	fg := lipgloss.NewStyle().Foreground(lipgloss.NoColor{})
+
 	return Styles{
-		Base:      lipgloss.NewStyle(),
+		Bg:        bg,
+		Fg:        fg,
+		Base:      fg,
 		Dim:       lipgloss.NewStyle().Faint(true),
 		Accent:    lipgloss.NewStyle().Foreground(accent),
 		Dir:       lipgloss.NewStyle().Foreground(dir),
@@ -84,7 +94,7 @@ func (s Styles) Row(selected bool) lipgloss.Style {
 	if selected {
 		return s.Selection
 	}
-	return s.Base
+	return s.Fg
 }
 
 // colorValue falls back to fallback when value is empty or whitespace.

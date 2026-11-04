@@ -40,6 +40,18 @@ func TestNewStylesUsesConfiguredColors(t *testing.T) {
 	if styles.Accent.Render("x") == styles.Dir.Render("x") {
 		t.Error("accent and dir styles render identically despite different colors")
 	}
+	if got := styles.Accent.Render("x"); !strings.Contains(got, "38;5;201") {
+		t.Errorf("accent render = %q, want ANSI 256 color 201", got)
+	}
+
+	// Bg and Fg exist as explicit roles and default to the terminal's own
+	// colors (no escape sequences injected).
+	if got := styles.Bg.Render("x"); got != "x" {
+		t.Errorf("default Bg render = %q, want plain x", got)
+	}
+	if got := styles.Fg.Render("x"); got != "x" {
+		t.Errorf("default Fg render = %q, want plain x", got)
+	}
 }
 
 func TestNewStylesEmptyColorsFallBack(t *testing.T) {

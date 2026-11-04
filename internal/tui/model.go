@@ -64,6 +64,13 @@ type Model struct {
 	focus  Pane
 	help   bool
 
+	// helpOffset is the first help binding row shown while the overlay is
+	// open. It lets the full keymap be reached on short terminals.
+	helpOffset int
+
+	// now is injectable for deterministic status-expiry tests.
+	now func() time.Time
+
 	queue *queue.Queue
 
 	// status caches the last player snapshot so rendering never calls into
@@ -110,6 +117,7 @@ func New(opts Options) *Model {
 		height:    defaultHeight,
 		focus:     PaneBrowser,
 		queue:     queue.New(),
+		now:       time.Now,
 		status:    player.Status{State: player.StateStopped, Volume: cfg.Volume},
 		statusMsg: "ready",
 		styles:    NewStyles(cfg.Colors),
@@ -128,7 +136,8 @@ func New(opts Options) *Model {
 		startDir = cfg.StartDir
 	}
 	if startDir == "" {
-		if cwd, err := os.Getwd(); err == nil {
+		startDir = "."
+		if cwd, err := os.Getwd(); err == nil && cwd != "" {
 			startDir = cwd
 		}
 	}
@@ -160,6 +169,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.help {
+			m.clampHelpOffset()
+		}
 		return m, nil
 
 	case tickMsg:
@@ -177,10 +189,19 @@ func (m *Model) refresh() {
 	if m.player != nil {
 		m.status = m.player.Status()
 	}
-	if !m.statusExpiry.IsZero() && !time.Now().Before(m.statusExpiry) {
+	if !m.statusExpiry.IsZero() && !m.currentTime().Before(m.statusExpiry) {
 		m.statusMsg = ""
 		m.statusExpiry = time.Time{}
 	}
+}
+
+// currentTime returns the model clock, falling back to the wall clock for a
+// zero-value model.
+func (m *Model) currentTime() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 // setStatus sets a transient status message. A zero timeout keeps the message
@@ -192,7 +213,7 @@ func (m *Model) setStatus(message string, timeout time.Duration) {
 		m.statusExpiry = time.Time{}
 		return
 	}
-	m.statusExpiry = time.Now().Add(timeout)
+	m.statusExpiry = m.currentTime().Add(timeout)
 }
 
 // handleKey dispatches global actions. Pane-specific actions are intentionally
@@ -200,10 +221,37 @@ func (m *Model) setStatus(message string, timeout time.Duration) {
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	if key == "esc" || key == "escape" {
-		if m.help {
-			m.help = false
+	// The help overlay is modal: it swallows pane/transport actions while it
+	// is open and only supports closing, quitting, and scrolling.
+	if m.help {
+		return m.handleHelpKey(key)
+	}
+
+	action, ok := m.keys.Action(key)
+	if !ok {
+		return m, nil
+	}
+
+	switch action {
+	case ActionQuit:
+		return m, tea.Quit
+	case ActionHelp:
+		m.help = true
+		m.helpOffset = 0
+	case ActionSwitchPane:
+		if m.focus == PaneBrowser {
+			m.focus = PanePlaylist
+		} else {
+			m.focus = PaneBrowser
 		}
+	}
+	return m, nil
+}
+
+// handleHelpKey handles keys while the help overlay is open.
+func (m *Model) handleHelpKey(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" || key == "escape" {
+		m.help = false
 		return m, nil
 	}
 
@@ -216,13 +264,47 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ActionQuit:
 		return m, tea.Quit
 	case ActionHelp:
-		m.help = !m.help
-	case ActionSwitchPane:
-		if m.focus == PaneBrowser {
-			m.focus = PanePlaylist
-		} else {
-			m.focus = PaneBrowser
-		}
+		m.help = false
+	case ActionUp:
+		m.scrollHelp(-1)
+	case ActionDown:
+		m.scrollHelp(1)
+	case ActionPageUp:
+		m.scrollHelp(-m.helpVisibleRows())
+	case ActionPageDown:
+		m.scrollHelp(m.helpVisibleRows())
+	case ActionFirst:
+		m.scrollHelp(-m.helpRows())
+	case ActionLast:
+		m.scrollHelp(m.helpRows())
 	}
 	return m, nil
+}
+
+// helpRows returns the number of two-column binding rows.
+func (m *Model) helpRows() int {
+	return (len(actionOrder) + 1) / 2
+}
+
+// helpVisibleRows returns how many binding rows fit under the overlay title.
+func (m *Model) helpVisibleRows() int {
+	return max(m.height-headerRows-footerRows-1, 1)
+}
+
+// scrollHelp moves the help offset by delta and clamps it to the available
+// range.
+func (m *Model) scrollHelp(delta int) {
+	m.helpOffset += delta
+	m.clampHelpOffset()
+}
+
+// clampHelpOffset keeps the help window within the binding rows.
+func (m *Model) clampHelpOffset() {
+	maxOffset := max(m.helpRows()-m.helpVisibleRows(), 0)
+	if m.helpOffset < 0 {
+		m.helpOffset = 0
+	}
+	if m.helpOffset > maxOffset {
+		m.helpOffset = maxOffset
+	}
 }

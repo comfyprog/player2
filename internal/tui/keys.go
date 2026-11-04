@@ -152,10 +152,15 @@ func NewKeyMap(cfg config.Config) (KeyMap, error) {
 
 	lookup := make(map[string]Action)
 	for _, action := range actionOrder {
+		seen := make(map[string]struct{}, len(merged[action]))
 		for _, key := range merged[action] {
 			if key == "" {
-				continue
+				return KeyMap{}, fmt.Errorf("keymap: empty key for action %q", action)
 			}
+			if _, exists := seen[key]; exists {
+				return KeyMap{}, fmt.Errorf("keymap: duplicate key %q within action %q", key, action)
+			}
+			seen[key] = struct{}{}
 			if previous, exists := lookup[key]; exists && previous != action {
 				return KeyMap{}, fmt.Errorf(
 					"keymap: duplicate key %q bound to both %q and %q",

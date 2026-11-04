@@ -19,8 +19,9 @@ const (
 	// progressWidth is the number of cells in the footer progress bar.
 	progressWidth = 20
 
-	// nowPlayingMarker marks the current queue item.
-	nowPlayingMarker = "▶"
+	// header markers.
+	playingMarker = "▶"
+	pausedMarker  = "⏸"
 )
 
 // View renders the shell as a Bubble Tea view.
@@ -37,7 +38,8 @@ func (m *Model) render() string {
 		return m.styles.Error.Render(fitPlain("player2: "+m.startupErr.Error(), max(m.width, 1)))
 	}
 	if m.width < minWidth || m.height < minHeight {
-		return m.styles.Error.Render(fitPlain("terminal too small (minimum 60x10)", max(m.width, 1)))
+		message := fmt.Sprintf("terminal too small (minimum %dx%d)", minWidth, minHeight)
+		return m.styles.Error.Render(fitPlain(message, max(m.width, 1)))
 	}
 
 	bodyHeight := m.height - headerRows - footerRows
@@ -114,9 +116,9 @@ func (m *Model) headerLine() string {
 
 	status := m.status
 	if status.State == player.StatePlaying || status.State == player.StatePaused {
-		marker := "▶"
+		marker := playingMarker
 		if status.State == player.StatePaused {
-			marker = "⏸"
+			marker = pausedMarker
 		}
 		parts = append(parts, marker+" "+m.nowPlayingLabel())
 		parts = append(parts, formatDuration(status.Position)+" / "+m.durationLabel())
@@ -283,34 +285,45 @@ func (m *Model) hintsLine() string {
 	return m.styles.Dim.Render(plain)
 }
 
-// helpLines renders the two-column keybinding overlay.
+// helpLines renders the two-column keybinding overlay. The overlay scrolls by
+// whole rows when all bindings do not fit, with a position indicator.
 func (m *Model) helpLines(height int) []string {
+	m.clampHelpOffset()
+
 	if height <= 0 {
 		return nil
 	}
 
-	title := fitPlain("Keys — Esc closes", m.width)
-	lines := []string{m.styles.PaneFocus.Render(title)}
+	rowsTotal := m.helpRows()
+	visible := min(m.helpVisibleRows(), rowsTotal)
+	start := m.helpOffset
+	end := min(start+visible, rowsTotal)
+
+	title := fmt.Sprintf("Keys %d-%d/%d", start+1, end, rowsTotal)
+	if end < rowsTotal {
+		title += " ▼ more"
+	}
+	title += " — Esc closes"
+	lines := []string{m.styles.PaneFocus.Render(fitPlain(title, m.width))}
 	if height == 1 {
 		return lines
 	}
 
-	bindings := m.keys.Bindings()
-	rows := (len(bindings) + 1) / 2
 	leftWidth := (m.width - 1) / 2
 	rightWidth := m.width - leftWidth - 1
 	divider := m.styles.Dim.Render("│")
 
-	for i := 0; i < rows && len(lines) < height; i++ {
+	bindings := m.keys.Bindings()
+	for i := start; i < end && len(lines) < height; i++ {
 		left := helpEntry(bindings[i])
 		right := ""
-		if j := i + rows; j < len(bindings) {
+		if j := i + rowsTotal; j < len(bindings) {
 			right = helpEntry(bindings[j])
 		}
 		lines = append(lines,
-			m.styles.Base.Render(fitPlain(left, leftWidth))+
+			m.styles.Fg.Render(fitPlain(left, leftWidth))+
 				divider+
-				m.styles.Base.Render(fitPlain(right, rightWidth)),
+				m.styles.Fg.Render(fitPlain(right, rightWidth)),
 		)
 	}
 

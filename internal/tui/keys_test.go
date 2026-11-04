@@ -192,6 +192,36 @@ func TestKeyMapRejectsDuplicateBinding(t *testing.T) {
 	}
 }
 
+func TestKeyMapRejectsDuplicateKeyWithinAction(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys = map[string][]string{"quit": {"q", "q"}}
+
+	_, err := NewKeyMap(cfg)
+	if err == nil {
+		t.Fatal("NewKeyMap accepted duplicate key within one action")
+	}
+	for _, want := range []string{`"q"`, "quit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %s", err, want)
+		}
+	}
+}
+
+func TestKeyMapRejectsEmptyKey(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys = map[string][]string{"quit": {"q", ""}}
+
+	_, err := NewKeyMap(cfg)
+	if err == nil {
+		t.Fatal("NewKeyMap accepted an empty key")
+	}
+	for _, want := range []string{"empty", "quit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %s", err, want)
+		}
+	}
+}
+
 func TestKeyMapRejectsUnknownAction(t *testing.T) {
 	cfg := config.Default()
 	cfg.Keys = map[string][]string{"dance": {"z"}}

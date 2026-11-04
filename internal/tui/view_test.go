@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +140,106 @@ func TestViewHelpToggle(t *testing.T) {
 	}
 }
 
+func TestViewHelpShowsAllBindingsAtNormalSize(t *testing.T) {
+	m := resize(t, newTestModel(t, nil), 100, 30)
+	m = press(t, m, runeKey('?'))
+
+	plain := ansi.Strip(m.View().Content)
+	bindings := m.keys.Bindings()
+	if len(bindings) != 32 {
+		t.Fatalf("bindings = %d, want 32", len(bindings))
+	}
+	for _, binding := range bindings {
+		if !strings.Contains(plain, binding.Description) {
+			t.Errorf("help overlay missing action %q (%s)", binding.Action, binding.Description)
+		}
+	}
+	if !strings.Contains(plain, "Keys 1-16/16") {
+		t.Errorf("help title lacks full-range indicator: %q", firstLine(plain))
+	}
+}
+
+func TestViewHelpScrollsToLastBindingAtMinimumSize(t *testing.T) {
+	m := resize(t, newTestModel(t, nil), 60, 10)
+	m = press(t, m, runeKey('?'))
+
+	plain := ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "▼ more") {
+		t.Errorf("help overlay has no more indicator at 60x10: %q", plain)
+	}
+	if strings.Contains(plain, "Go to playing") {
+		t.Fatal("last binding visible before scrolling at 60x10")
+	}
+
+	// The overlay keeps the viewport in range and reaches the final row.
+	for range 20 {
+		m = press(t, m, specialKey(tea.KeyDown))
+	}
+	plain = ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Go to playing") {
+		t.Errorf("last binding unreachable after scrolling: %q", plain)
+	}
+	if !strings.Contains(plain, "Keys 11-16/16") {
+		t.Errorf("help title does not show the scrolled position: %q", firstLine(plain))
+	}
+	for i, line := range strings.Split(m.View().Content, "\n") {
+		if width := ansi.StringWidth(line); width != 60 {
+			t.Errorf("help line %d width = %d, want 60", i, width)
+		}
+	}
+}
+
+func TestHelpOverlayIsModal(t *testing.T) {
+	fp := newFakePlayer()
+	m := newTestModel(t, func(opts *Options) { opts.Player = fp })
+	m = resize(t, m, 100, 30)
+	m = press(t, m, runeKey('?'))
+
+	m = press(t, m, specialKey(tea.KeyTab))
+	if m.focus != PaneBrowser {
+		t.Error("tab switched focus underneath the help overlay")
+	}
+	if !m.help {
+		t.Fatal("help closed unexpectedly")
+	}
+
+	// Transport actions are swallowed while the overlay is open.
+	m = press(t, m, specialKey(tea.KeySpace))
+	if fp.pauses != 0 {
+		t.Error("space toggled pause underneath the help overlay")
+	}
+	if !m.help {
+		t.Fatal("help closed on space")
+	}
+
+	// Up/down scroll instead of moving a pane selection.
+	m = press(t, m, specialKey(tea.KeyDown))
+	if !m.help {
+		t.Fatal("help closed on down")
+	}
+}
+
+func TestEscWithoutHelpIsNotConsumedGlobally(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.Keys = map[string][]string{"quit": {"esc"}}
+	})
+
+	_, cmd := m.Update(specialKey(tea.KeyEscape))
+	if cmd == nil {
+		t.Fatal("Esc bound to quit returned no command when help is closed")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("Esc command = %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func firstLine(text string) string {
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		return text[:i]
+	}
+	return text
+}
+
 func TestViewHelpShowsConfiguredKeys(t *testing.T) {
 	m := newTestModel(t, func(opts *Options) {
 		opts.Config.Keys = map[string][]string{
@@ -174,6 +275,30 @@ func TestStatusMessageExpiresOnTick(t *testing.T) {
 	}
 	if updated.statusMsg != "" {
 		t.Errorf("statusMsg = %q after expiry, want empty", updated.statusMsg)
+	}
+}
+
+func TestStatusMessageExpiresAfterPositiveDeadline(t *testing.T) {
+	base := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	m := newTestModel(t, func(opts *Options) {})
+	m.now = func() time.Time { return base }
+	m.setStatus("saved", 2*time.Second)
+	if got, want := m.statusExpiry, base.Add(2*time.Second); !got.Equal(want) {
+		t.Fatalf("statusExpiry = %v, want %v", got, want)
+	}
+
+	// Before the deadline the message survives a tick.
+	m.now = func() time.Time { return base.Add(time.Second) }
+	next, _ := m.Update(tickMsg(base.Add(time.Second)))
+	if got := next.(*Model).statusMsg; got != "saved" {
+		t.Errorf("statusMsg = %q before deadline, want saved", got)
+	}
+
+	// After the positive timeout elapses the next tick clears it.
+	m.now = func() time.Time { return base.Add(3 * time.Second) }
+	next, _ = m.Update(tickMsg(base.Add(3 * time.Second)))
+	if got := next.(*Model).statusMsg; got != "" {
+		t.Errorf("statusMsg = %q after positive deadline, want empty", got)
 	}
 }
 
@@ -246,6 +371,79 @@ func TestProgressBarScalesWithPlayback(t *testing.T) {
 	}
 }
 
+func TestViewHeaderWhilePlayingAndPaused(t *testing.T) {
+	m := newTestModel(t, nil)
+	m.queue.Append(queue.Item{Title: "Song", Artist: "Artist", Duration: 4*time.Minute + 12*time.Second})
+	m = resize(t, m, 100, 30)
+
+	m.status = player.Status{State: player.StatePlaying, Position: time.Minute + 23*time.Second, Volume: 70}
+	header := firstLine(ansi.Strip(m.View().Content))
+	for _, want := range []string{"▶ Song — Artist", "1:23 / 4:12", "vol 70", "R:off", "S:off"} {
+		if !strings.Contains(header, want) {
+			t.Errorf("playing header %q missing %q", header, want)
+		}
+	}
+
+	m.status.State = player.StatePaused
+	header = firstLine(ansi.Strip(m.View().Content))
+	if !strings.Contains(header, "⏸ Song — Artist") {
+		t.Errorf("paused header = %q, want paused marker", header)
+	}
+}
+
+func TestHomeAbbreviationAndLeftTruncation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if got, want := abbreviateHome(filepath.Join(home, "Music")), "~/Music"; got != want {
+		t.Errorf("abbreviateHome = %q, want %q", got, want)
+	}
+	if got := abbreviateHome(home); got != "~" {
+		t.Errorf("abbreviateHome(home) = %q, want ~", got)
+	}
+
+	long := filepath.Join(home, "Music", "Artist", "Album", "Track.flac")
+	got := truncateLeft(long, 20)
+	if !strings.HasPrefix(got, "…") {
+		t.Errorf("truncateLeft = %q, want leading ellipsis", got)
+	}
+	if !strings.HasSuffix(got, "Track.flac") {
+		t.Errorf("truncateLeft = %q, want to keep the path tail", got)
+	}
+	if width := ansi.StringWidth(got); width > 20 {
+		t.Errorf("truncateLeft width = %d, want <= 20", width)
+	}
+}
+
+func TestViewSanitizesControlCharacters(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.StartDir = "/tmp/\x1b[31mred\nname\x07"
+	})
+	m.browserPath = m.startDir
+	m = resize(t, m, 80, 24)
+
+	content := m.View().Content
+	lines := strings.Split(content, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("control characters changed line count to %d", len(lines))
+	}
+	if strings.Contains(content, "\x1b[31m") {
+		t.Error("injected ANSI color survived sanitization")
+	}
+	if strings.Contains(content, "\x07") {
+		t.Error("control character survived sanitization")
+	}
+	plain := ansi.Strip(content)
+	if !strings.Contains(plain, "red name") {
+		t.Errorf("sanitized path = %q, want red name", plain)
+	}
+	for i, line := range lines {
+		if width := ansi.StringWidth(line); width != 80 {
+			t.Errorf("line %d width = %d, want 80", i, width)
+		}
+	}
+}
+
 func TestViewStartupError(t *testing.T) {
 	opts := baseOptions()
 	opts.Config.Keys = map[string][]string{"help": {"q"}}
@@ -275,8 +473,8 @@ func TestViewAccentTitleFromConfig(t *testing.T) {
 	content := m.View().Content
 	for _, line := range strings.Split(content, "\n") {
 		if strings.Contains(ansi.Strip(line), "Files:") {
-			if line == ansi.Strip(line) {
-				t.Error("Files: title was not styled with the configured accent")
+			if !strings.Contains(line, "38;5;201") {
+				t.Errorf("Files: title lacks configured accent code: %q", line)
 			}
 			return
 		}
