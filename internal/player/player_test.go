@@ -400,6 +400,74 @@ func TestUnknownDurationFinishesAfterEOFDrained(t *testing.T) {
 	expectNoEvent(t, p, 80*time.Millisecond)
 }
 
+func TestFinishPositionIncludesTailDrainedDuringTick(t *testing.T) {
+	pcm := bytes.Repeat([]byte{0xcd}, bytesPerSecond) // exactly one second
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     time.Duration
+	}{
+		{name: "known duration", duration: time.Second, want: time.Second},
+		{name: "unknown duration", duration: 0, want: time.Second},
+		{name: "shorter than metadata", duration: 2 * time.Second, want: time.Second},
+		{name: "clamped to track duration", duration: 500 * time.Millisecond, want: 500 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream {
+				return newFakeStream(bytes.Clone(pcm), nil)
+			}}
+			sink := &fakeSink{}
+			p := mustNew(t, dec, sink, Options{})
+
+			if err := p.Play(queue.Item{Path: "/music/tail.wav", Duration: tt.duration}); err != nil {
+				t.Fatalf("Play() error = %v", err)
+			}
+
+			ring := sink.Ring()
+			waitWritten(t, ring, int64(len(pcm)))
+			waitFor(t, "decoder EOF", func() bool {
+				p.ctrl.Lock()
+				defer p.ctrl.Unlock()
+				if p.stream == nil {
+					return false
+				}
+				_, _, done := p.stream.snapshot()
+				return done
+			})
+
+			// Drain the entire tail inside the sample-to-completion window. The
+			// finished position must reflect the newly consumed bytes, not the
+			// position sampled before the hook ran.
+			var drained bool
+			p.ctrl.Lock()
+			p.afterSample = func() {
+				if drained {
+					return
+				}
+				drained = true
+				buf := make([]byte, 8192)
+				for ring.Read(buf) > 0 {
+				}
+			}
+			p.ctrl.Unlock()
+
+			ev := waitEvent(t, p)
+			if ev.Type != EventFinished {
+				t.Fatalf("event = %+v, want finished", ev)
+			}
+			st := p.Status()
+			if st.State != StateStopped {
+				t.Errorf("state = %v, want stopped", st.State)
+			}
+			if st.Position != tt.want {
+				t.Errorf("final position = %v, want %v", st.Position, tt.want)
+			}
+		})
+	}
+}
+
 func TestPauseFreezesPositionAndConsumption(t *testing.T) {
 	pcm := bytes.Repeat([]byte{0x44}, bytesPerSecond) // 1 s
 	dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream {

@@ -27,8 +27,8 @@ const (
 	// checked. It is short enough to feel immediate without busy-looping.
 	monitorInterval = 10 * time.Millisecond
 
-	// eventBuffer holds several events so the monitor never needs to block on
-	// a slow consumer. Transport changes produce at most one event each.
+	// eventBuffer absorbs bursts of events. The monitor blocks when it is full;
+	// Close closes stopCh to unblock it during shutdown.
 	eventBuffer = 32
 
 	// decodeChunk is the read size handed to the decoder.
@@ -167,6 +167,11 @@ type Player struct {
 	stopCh      chan struct{}
 	stopOnce    sync.Once
 	monitorDone chan struct{}
+
+	// afterSample is a test-only hook invoked after tickLocked samples the
+	// position and before it decides the stream is finished. Tests use it to
+	// drain the ring inside the sample-to-completion window.
+	afterSample func()
 }
 
 // New creates a playback engine, starts the sink, and launches the monitor.
@@ -569,9 +574,14 @@ func (p *Player) tickLocked() (Event, bool) {
 	}
 	eof, decErr, done := st.snapshot()
 	pos := p.currentPositionLocked()
+	if p.afterSample != nil {
+		p.afterSample()
+	}
 
 	// The logical end of a known-duration track wins even if the decoder is
-	// still producing data (a CUE track is a slice of a longer file).
+	// still producing data (a CUE track is a slice of a longer file). pos is
+	// monotonic, so a stale low sample only delays this by one tick; the final
+	// position is always the exact item duration.
 	if p.item.Duration > 0 && pos >= p.item.Duration {
 		p.completeLocked(p.item.Duration)
 		return Event{Type: EventFinished}, true
@@ -587,9 +597,16 @@ func (p *Player) tickLocked() (Event, bool) {
 	}
 
 	// Unknown duration, or a file shorter than its metadata: the track ends
-	// when the decoder is done and the ring has been fully consumed.
+	// when the decoder is done and the ring has been fully consumed. Once that
+	// condition holds the byte count is stable, so recompute the position here
+	// rather than using the earlier sample: a consumer may have drained the
+	// tail between the sample and this check.
 	if done && eof && p.ring.Written() == p.ring.Consumed() {
-		p.completeLocked(pos)
+		final := p.currentPositionLocked()
+		if p.item.Duration > 0 && final > p.item.Duration {
+			final = p.item.Duration
+		}
+		p.completeLocked(final)
 		return Event{Type: EventFinished}, true
 	}
 
