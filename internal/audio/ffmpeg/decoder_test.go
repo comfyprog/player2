@@ -387,14 +387,18 @@ wait
 		_, err := io.ReadAll(stream)
 		readDone <- err
 	}()
+	var readErr error
 	select {
-	case <-readDone:
+	case readErr = <-readDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Read blocked after context cancellation")
 	}
+	if !errors.Is(readErr, context.Canceled) {
+		t.Fatalf("ReadAll() error = %v, want a wrapped context.Canceled", readErr)
+	}
 
-	if err := stream.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
+	if closeErr := stream.Close(); !errors.Is(closeErr, context.Canceled) {
+		t.Fatalf("Close() error = %v, want a wrapped context.Canceled", closeErr)
 	}
 	s := asStream(t, stream)
 	if s.cmd.ProcessState == nil {
@@ -403,6 +407,50 @@ wait
 
 	waitGone(t, mainPID)
 	waitGone(t, childPID)
+}
+
+func TestContextTimeoutReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	bin := writeScript(t, dir, `d=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+echo $$ > "$d/main.pid"
+sleep 30
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	stream, err := New(bin).Open(ctx, audio.Request{Path: "/music/a.mp3"})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	waitForFile(t, filepath.Join(dir, "main.pid"))
+	mainPID := readPID(t, filepath.Join(dir, "main.pid"))
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(stream)
+		readDone <- err
+	}()
+	var readErr error
+	select {
+	case readErr = <-readDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Read blocked after context timeout")
+	}
+	if !errors.Is(readErr, context.DeadlineExceeded) {
+		t.Fatalf("ReadAll() error = %v, want a wrapped context.DeadlineExceeded", readErr)
+	}
+
+	if closeErr := stream.Close(); !errors.Is(closeErr, context.DeadlineExceeded) {
+		t.Fatalf("Close() error = %v, want a wrapped context.DeadlineExceeded", closeErr)
+	}
+	s := asStream(t, stream)
+	if s.cmd.ProcessState == nil {
+		t.Fatal("ProcessState = nil after timeout, want non-nil")
+	}
+
+	waitGone(t, mainPID)
 }
 
 func TestStderrIncludedInDecodeError(t *testing.T) {

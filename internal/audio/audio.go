@@ -43,6 +43,10 @@ type Decoder interface {
 	Open(ctx context.Context, req Request) (Stream, error)
 }
 
+// Registry implements Decoder so callers can use a populated registry
+// directly as the playback engine's decoder.
+var _ Decoder = (*Registry)(nil)
+
 // Registry maps file extensions to decoders. The zero value is ready to use;
 // NewRegistry is provided for convenience. Registrations normally happen at
 // startup, but lookups are safe for concurrent use.

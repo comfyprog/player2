@@ -113,6 +113,7 @@ func (d *Decoder) Open(ctx context.Context, req audio.Request) (audio.Stream, er
 		stderr: stderr,
 		path:   req.Path,
 		bin:    bin,
+		ctx:    ctx,
 	}, nil
 }
 
@@ -181,11 +182,13 @@ type stream struct {
 	stdout io.ReadCloser
 	cmd    *exec.Cmd
 	stderr *boundedBuffer
+	ctx    context.Context
 	path   string
 	bin    string
 
 	waitOnce sync.Once
 	waitErr  error
+	ctxErr   error
 
 	mu     sync.Mutex
 	closed bool
@@ -220,6 +223,9 @@ func (s *stream) Read(p []byte) (int, error) {
 	if s.waitErr != nil {
 		return n, s.decodeError(s.waitErr)
 	}
+	if s.ctxErr != nil {
+		return n, s.decodeError(s.ctxErr)
+	}
 	return n, io.EOF
 }
 
@@ -237,7 +243,7 @@ func (s *stream) Close() error {
 
 	_ = s.stdout.Close()
 
-	if s.cmd.Process != nil {
+	if s.cmd.Process != nil && s.cmd.ProcessState == nil {
 		if err := syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			// The group may already be gone; fall back to the direct child.
 			_ = s.cmd.Process.Kill()
@@ -248,11 +254,16 @@ func (s *stream) Close() error {
 	if s.waitErr != nil {
 		return s.decodeError(s.waitErr)
 	}
+	if s.ctxErr != nil {
+		return s.decodeError(s.ctxErr)
+	}
 	return nil
 }
 
-// finalize waits for the child exactly once and ignores the expected SIGKILL
-// produced by Close or by context cancellation.
+// finalize waits for the child exactly once. It records the context error at
+// the moment the process ends so cancellation is reported to Read/Close
+// instead of masquerading as a clean EOF. The expected SIGKILL produced by
+// Close or cancellation itself is ignored; other wait errors are retained.
 func (s *stream) finalize() {
 	s.waitOnce.Do(func() {
 		err := s.cmd.Wait()
@@ -260,6 +271,7 @@ func (s *stream) finalize() {
 			err = nil
 		}
 		s.waitErr = err
+		s.ctxErr = s.ctx.Err()
 	})
 }
 
