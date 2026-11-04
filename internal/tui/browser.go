@@ -602,18 +602,22 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 		return nil
 	}
 
+	// A replacement queue starts with fresh item IDs.
+	m.probing = make(map[uint64]bool)
 	m.queue.Replace(msg.items...)
 	selected := msg.selected
 	if selected < 0 || selected >= len(msg.items) {
 		selected = 0
 	}
 	m.queue.SetCurrent(selected)
+	m.playlistSelected = selected
+	m.clampPlaylist()
 
 	player := m.player
 	item, ok := m.queue.Current()
 	if player == nil || !ok {
 		m.setStatusOK(msg.status)
-		return nil
+		return m.afterQueueChange()
 	}
 
 	gen := msg.gen
@@ -640,9 +644,9 @@ func (m *Model) applyBrowserPlayResult(msg browserPlayResultMsg) {
 }
 
 // applyBrowserAdd appends expanded items to the existing queue.
-func (m *Model) applyBrowserAdd(msg browserAddMsg) {
+func (m *Model) applyBrowserAdd(msg browserAddMsg) tea.Cmd {
 	if msg.gen != m.browserGen {
-		return
+		return nil
 	}
 	if msg.err != nil {
 		status := msg.status
@@ -650,12 +654,14 @@ func (m *Model) applyBrowserAdd(msg browserAddMsg) {
 			status = msg.err.Error()
 		}
 		m.setStatusError(status)
-		return
+		return nil
 	}
 	if len(msg.items) > 0 {
 		m.queue.Append(msg.items...)
+		m.clampPlaylist()
 	}
 	m.setStatusOK(msg.status)
+	return m.afterQueueChange()
 }
 
 // handleBrowserAction dispatches pane actions while the browser is focused.

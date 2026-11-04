@@ -76,8 +76,11 @@ func (m *Model) bodyLines(height int) []string {
 
 // paneLines renders one pane's title and content.
 func (m *Model) paneLines(pane Pane, width, height int) []string {
-	if pane == PaneBrowser {
+	switch pane {
+	case PaneBrowser:
 		return m.browserLines(width, height)
+	case PanePlaylist:
+		return m.playlistLines(width, height)
 	}
 
 	lines := make([]string, height)

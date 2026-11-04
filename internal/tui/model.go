@@ -98,6 +98,17 @@ type Model struct {
 	// Playlist pane state.
 	playlistSelected int
 	playlistOffset   int
+
+	// lastVolume restores the previous level after a mute toggle.
+	lastVolume int
+
+	// Queue persistence is single-flight; saveDirty records a mutation that
+	// arrived while a save was in flight.
+	saving    bool
+	saveDirty bool
+
+	// probing tracks metadata probes currently in flight, keyed by item ID.
+	probing map[uint64]bool
 }
 
 // tickMsg is delivered by the periodic status refresh.
@@ -112,19 +123,21 @@ var _ tea.Model = (*Model)(nil)
 func New(opts Options) *Model {
 	cfg := opts.Config
 	m := &Model{
-		cfg:       cfg,
-		scanner:   opts.Scanner,
-		player:    opts.Player,
-		store:     opts.Store,
-		prober:    opts.Prober,
-		width:     defaultWidth,
-		height:    defaultHeight,
-		focus:     PaneBrowser,
-		queue:     queue.New(),
-		now:       time.Now,
-		status:    player.Status{State: player.StateStopped, Volume: cfg.Volume},
-		statusMsg: "ready",
-		styles:    NewStyles(cfg.Colors),
+		cfg:        cfg,
+		scanner:    opts.Scanner,
+		player:     opts.Player,
+		store:      opts.Store,
+		prober:     opts.Prober,
+		width:      defaultWidth,
+		height:     defaultHeight,
+		focus:      PaneBrowser,
+		queue:      queue.New(),
+		now:        time.Now,
+		status:     player.Status{State: player.StateStopped, Volume: cfg.Volume},
+		lastVolume: cfg.Volume,
+		statusMsg:  "ready",
+		styles:     NewStyles(cfg.Colors),
+		probing:    make(map[uint64]bool),
 	}
 
 	keys, err := NewKeyMap(cfg)
@@ -157,11 +170,18 @@ func (m *Model) StartDir() string { return m.startDir }
 // Err returns the startup validation error, if any.
 func (m *Model) Err() error { return m.startupErr }
 
-// Init starts the periodic status tick and the initial browser load.
+// Init starts the periodic status tick, the initial browser load, an optional
+// queue restore, and the player event subscription.
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.tick()}
 	if m.scanner != nil {
 		cmds = append(cmds, m.loadBrowser(m.browserPath, m.browserCue, 0, 0, ""))
+	}
+	if m.cfg.RestoreQueue && m.store != nil {
+		cmds = append(cmds, m.restoreCmd())
+	}
+	if m.player != nil {
+		cmds = append(cmds, m.waitForPlayerEvent())
 	}
 	return tea.Batch(cmds...)
 }
@@ -180,6 +200,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.clampBrowser()
+		m.clampPlaylist()
 		if m.help {
 			m.clampHelpOffset()
 		}
@@ -198,11 +219,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case browserPlayResultMsg:
 		m.applyBrowserPlayResult(msg)
-		return m, nil
+		if msg.gen != m.browserGen {
+			return m, nil
+		}
+		return m, m.afterQueueChange()
 
 	case browserAddMsg:
-		m.applyBrowserAdd(msg)
+		return m, m.applyBrowserAdd(msg)
+
+	case playerEventMsg:
+		if !msg.ok {
+			return m, nil
+		}
+		return m, tea.Batch(m.handlePlayerEvent(msg), m.waitForPlayerEvent())
+
+	case transportPlayResultMsg:
+		m.applyTransportPlayResult(msg)
 		return m, nil
+
+	case seekResultMsg:
+		m.applySeekResult(msg)
+		return m, nil
+
+	case queueRestoredMsg:
+		return m, m.applyQueueRestored(msg)
+
+	case queueSavedMsg:
+		return m, m.applyQueueSaved(msg)
+
+	case queueMetadataMsg:
+		return m, m.applyQueueMetadata(msg)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -293,13 +339,18 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.focus = PaneBrowser
 		}
+		m.clampPlaylist()
 		return m, nil
+	}
+
+	if cmd, handled := m.handleTransportAction(action); handled {
+		return m, cmd
 	}
 
 	if m.focus == PaneBrowser {
 		return m, m.handleBrowserAction(action)
 	}
-	return m, nil
+	return m, m.handlePlaylistAction(action)
 }
 
 // handleHelpKey handles keys while the help overlay is open.

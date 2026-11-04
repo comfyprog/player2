@@ -18,14 +18,16 @@ import (
 // fakePlayer is an in-memory Player implementation used by model and view
 // tests. It never opens an audio device.
 type fakePlayer struct {
-	mu      sync.Mutex
-	status  player.Status
-	events  chan player.Event
-	played  []queue.Item
-	pauses  int
-	stops   int
-	volumes []int
-	closed  bool
+	mu         sync.Mutex
+	status     player.Status
+	events     chan player.Event
+	played     []queue.Item
+	pauses     int
+	stops      int
+	volumes    []int
+	seekDeltas []time.Duration
+	seekErr    error
+	closed     bool
 }
 
 func newFakePlayer() *fakePlayer {
@@ -64,7 +66,12 @@ func (p *fakePlayer) Stop() {
 	p.status.Position = 0
 }
 
-func (p *fakePlayer) SeekBy(time.Duration) error { return nil }
+func (p *fakePlayer) SeekBy(delta time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.seekDeltas = append(p.seekDeltas, delta)
+	return p.seekErr
+}
 
 func (p *fakePlayer) SetVolume(percent int) {
 	p.mu.Lock()
@@ -112,26 +119,67 @@ func (fakeScanner) ResolveCueTrack(context.Context, string, int) (library.Entry,
 
 // fakeStore records saved snapshots and returns a configured snapshot.
 type fakeStore struct {
+	mu       sync.Mutex
 	snapshot queue.Snapshot
 	skipped  int
 	loadErr  error
+	saveErr  error
 	saved    []queue.Snapshot
 }
 
 func (s *fakeStore) Load() (queue.Snapshot, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.snapshot, s.skipped, s.loadErr
 }
 
 func (s *fakeStore) Save(snapshot queue.Snapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.saved = append(s.saved, snapshot)
 	return nil
 }
 
-// fakeProber returns empty metadata.
-type fakeProber struct{}
+func (s *fakeStore) saveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.saved)
+}
 
-func (fakeProber) Probe(context.Context, string) (meta.Info, error) {
-	return meta.Info{}, nil
+func (s *fakeStore) lastSaved() (queue.Snapshot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.saved) == 0 {
+		return queue.Snapshot{}, false
+	}
+	return s.saved[len(s.saved)-1], true
+}
+
+// fakeProber returns configured metadata and records probed paths.
+type fakeProber struct {
+	mu    sync.Mutex
+	info  map[string]meta.Info
+	err   map[string]error
+	calls []string
+}
+
+func (p *fakeProber) Probe(_ context.Context, path string) (meta.Info, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.calls == nil {
+		p.calls = make([]string, 0, 1)
+	}
+	p.calls = append(p.calls, path)
+	return p.info[path], p.err[path]
+}
+
+func (p *fakeProber) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.calls)
 }
 
 func baseOptions() Options {
@@ -141,7 +189,7 @@ func baseOptions() Options {
 		Scanner:  fakeScanner{},
 		Player:   newFakePlayer(),
 		Store:    &fakeStore{},
-		Prober:   fakeProber{},
+		Prober:   &fakeProber{},
 	}
 }
 
