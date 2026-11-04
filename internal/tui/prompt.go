@@ -65,10 +65,12 @@ func (m *Model) newPromptInput(value string) textinput.Model {
 }
 
 // openSavePrompt starts the `w` flow from either pane. The default filename is
-// relative to the current browser directory.
+// relative to the current browser directory and is shown as a placeholder so
+// typing replaces it instead of appending to it.
 func (m *Model) openSavePrompt() tea.Cmd {
 	dir := m.saveDirectory()
-	input := m.newPromptInput(defaultPlaylistName)
+	input := m.newPromptInput("")
+	input.Placeholder = defaultPlaylistName
 	m.prompt = promptState{
 		mode:    promptSavePlaylist,
 		title:   "Save playlist",
@@ -121,21 +123,21 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case promptConfirmOverwrite:
 		switch key {
-		case "y", "Y", "enter":
+		case "y", "Y":
 			target := m.prompt.target
 			m.prompt = promptState{}
 			return m, m.savePlaylistCmd(target)
-		case "n", "N", "esc", "escape":
+		case "enter", "n", "N", "esc", "escape":
 			m.prompt = promptState{}
 		}
 		return m, nil
 
 	case promptConfirmClear:
 		switch key {
-		case "y", "Y", "enter":
+		case "y", "Y":
 			m.prompt = promptState{}
 			return m, m.playlistClear()
-		case "n", "N", "esc", "escape":
+		case "enter", "n", "N", "esc", "escape":
 			m.prompt = promptState{}
 		}
 		return m, nil
@@ -175,7 +177,7 @@ func (m *Model) submitSavePrompt() (tea.Model, tea.Cmd) {
 			mode:    promptConfirmOverwrite,
 			title:   "Overwrite playlist",
 			message: fmt.Sprintf("Overwrite %s? [y/N]", abbreviateHome(abs)),
-			hint:    "y/Enter confirm — n/Esc cancel",
+			hint:    "y confirm — n/Esc cancel",
 			target:  abs,
 		}
 		return m, nil
@@ -215,7 +217,7 @@ func (m *Model) requestClear() tea.Cmd {
 		mode:    promptConfirmClear,
 		title:   "Clear queue",
 		message: "Clear queue? [y/N]",
-		hint:    "y/Enter confirm — n/Esc cancel",
+		hint:    "y confirm — n/Esc cancel",
 	}
 	return nil
 }

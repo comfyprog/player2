@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,8 +55,11 @@ func TestSavePromptWritesDefaultAndSupportsEditing(t *testing.T) {
 	if m.prompt.mode != promptSavePlaylist {
 		t.Fatalf("prompt mode = %v after w, want save playlist", m.prompt.mode)
 	}
-	if got := m.prompt.input.Value(); got != "playlist.m3u" {
-		t.Fatalf("default input = %q, want playlist.m3u", got)
+	if got := m.prompt.input.Value(); got != "" {
+		t.Fatalf("default input = %q, want empty (default is a placeholder)", got)
+	}
+	if got := m.prompt.input.Placeholder; got != "playlist.m3u" {
+		t.Fatalf("placeholder = %q, want playlist.m3u", got)
 	}
 
 	plain := ansi.Strip(m.View().Content)
@@ -293,19 +297,25 @@ func TestSavePromptOverwriteConfirmation(t *testing.T) {
 		}
 	})
 
-	t.Run("Enter overwrites", func(t *testing.T) {
+	t.Run("Enter cancels", func(t *testing.T) {
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
 		m, _ := newSaveModel(t, dir)
 		m.queue.Append(queueItemAt(dir, "two.flac"))
 		m = press(t, m, runeKey('w'))
 		m = press(t, m, specialKey(tea.KeyEnter))
 		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
-		if cmd == nil {
-			t.Fatal("confirmation returned no save command")
+		if cmd != nil {
+			t.Fatal("Enter confirmed an overwrite; only y/Y should confirm")
 		}
-		m = runCmd(t, m, cmd)
+		if m.prompt.mode != promptNone {
+			t.Error("prompt stayed open after Enter")
+		}
 		data, _ := os.ReadFile(path)
-		if !strings.Contains(string(data), "two.flac") {
-			t.Errorf("file after Enter = %q, want the queue item", data)
+		if !bytes.Equal(data, before) {
+			t.Errorf("file after Enter = %q, want unchanged %q", data, before)
 		}
 	})
 }
@@ -348,13 +358,33 @@ func TestClearConfirmation(t *testing.T) {
 		}
 	})
 
-	t.Run("Enter clears, stops, and persists", func(t *testing.T) {
+	t.Run("Enter cancels", func(t *testing.T) {
+		m, fp := newPlaylistModel(t, nil)
+		m.queue.Append(playlistItem("One", "", 1, 0), playlistItem("Two", "", 2, 0))
+
+		m = press(t, m, runeKey('c'))
+		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		if cmd != nil {
+			t.Fatal("Enter cleared the queue; only y/Y should confirm")
+		}
+		if m.prompt.mode != promptNone {
+			t.Error("prompt stayed open after Enter")
+		}
+		if got := len(m.queue.Snapshot().Items); got != 2 {
+			t.Errorf("queue length = %d after Enter, want 2", got)
+		}
+		if fp.stops != 0 {
+			t.Errorf("stops = %d after Enter, want 0", fp.stops)
+		}
+	})
+
+	t.Run("y clears, stops, and persists", func(t *testing.T) {
 		m, fp := newPlaylistModel(t, nil)
 		store := m.store.(*fakeStore)
 		m.queue.Append(playlistItem("One", "", 1, 0), playlistItem("Two", "", 2, 0))
 
 		m = press(t, m, runeKey('c'))
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m, cmd := pressForCmd(t, m, runeKey('y'))
 		if cmd == nil {
 			t.Fatal("clear confirmation returned no command")
 		}
@@ -397,8 +427,8 @@ func TestPromptSwallowsNormalKeysAndQuitsOnCtrlC(t *testing.T) {
 	if fp.stops != 0 {
 		t.Error("x stopped playback while the prompt was active")
 	}
-	if got := m.prompt.input.Value(); got != "playlist.m3ux?q" {
-		t.Errorf("input = %q, want the keystrokes typed into the prompt", got)
+	if got := m.prompt.input.Value(); got != "x?q" {
+		t.Errorf("input = %q, want only the keystrokes typed into the prompt", got)
 	}
 
 	m, cmd := pressForCmd(t, m, ctrlKey('c'))
@@ -443,13 +473,14 @@ func TestBrowserEnterPlaylistStopsBeforeLoading(t *testing.T) {
 	}}
 
 	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
-	if fp.stops != 1 {
-		t.Errorf("stops = %d when opening a playlist, want 1", fp.stops)
-	}
 	if cmd == nil {
 		t.Fatal("opening a playlist returned no command")
 	}
-	m = applyBrowserCmd(t, m, cmd)
+	// Stop is serialized and runs as a command rather than inside Update.
+	m = applyBrowserFollow(t, m, cmd)
+	if fp.stops != 1 {
+		t.Errorf("stops = %d when opening a playlist, want 1", fp.stops)
+	}
 
 	items := m.queue.Snapshot().Items
 	if len(items) != 1 || items[0].Path != audio {

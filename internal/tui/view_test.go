@@ -305,7 +305,10 @@ func TestStatusMessageExpiresAfterPositiveDeadline(t *testing.T) {
 func TestTickRefreshesPlayerStatus(t *testing.T) {
 	fp := newFakePlayer()
 	fp.status = player.Status{State: player.StatePlaying, Position: 12 * time.Second, Volume: 55}
-	m := newTestModel(t, func(opts *Options) { opts.Player = fp })
+	m := newTestModel(t, func(opts *Options) {
+		opts.Player = fp
+		opts.Config.Volume = 55
+	})
 
 	next, _ := m.Update(tickMsg(time.Now()))
 	updated := next.(*Model)

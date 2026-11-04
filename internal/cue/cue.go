@@ -430,10 +430,18 @@ func localPath(name, baseDir string) (string, error) {
 		}
 		if strings.EqualFold(scheme, "file") {
 			rest := name[len(match[0]):]
-			if i := strings.IndexByte(rest, '/'); i >= 0 && strings.EqualFold(rest[:i], "localhost") {
+			host := rest
+			if i := strings.IndexByte(rest, '/'); i >= 0 {
+				host = rest[:i]
 				rest = rest[i:]
-			} else if strings.EqualFold(rest, "localhost") {
-				rest = "/"
+			} else {
+				rest = ""
+			}
+			if host != "" && !strings.EqualFold(host, "localhost") {
+				return "", fmt.Errorf("remote file URL host %q is not supported; only local files are allowed", host)
+			}
+			if rest == "" {
+				return "", fmt.Errorf("file URL %q has no path", name)
 			}
 			unescaped, err := url.PathUnescape(rest)
 			if err != nil {

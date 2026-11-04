@@ -130,7 +130,10 @@ func applyBrowserCmd(t *testing.T, m *Model, cmd tea.Cmd) *Model {
 	}
 	msg := cmd()
 	if batch, ok := msg.(tea.BatchMsg); ok {
-		t.Fatalf("unexpected batch message with %d commands", len(batch))
+		for _, sub := range batch {
+			m = applyBrowserFollow(t, m, sub)
+		}
+		return m
 	}
 	next, follow := m.Update(msg)
 	updated, ok := next.(*Model)
@@ -297,6 +300,45 @@ func TestBrowserEnterCueFolderAndBack(t *testing.T) {
 	}
 	if m.browserPath != "/music" || len(m.browserEntries) != 1 {
 		t.Errorf("back location = %q with %d entries, want /music with 1", m.browserPath, len(m.browserEntries))
+	}
+}
+
+func TestBrowserCueRowsShowDurationsAtSmallAndLargeSizes(t *testing.T) {
+	cuePath := "/music/Album.cue"
+	entries := []library.Entry{
+		cueTrackEntry("01. One — Artist", "/music/song.flac", cuePath, 1, 0, 3*time.Minute),
+		cueTrackEntry("02. Two — Artist", "/music/song.flac", cuePath, 2, 3*time.Minute, 2*time.Minute),
+	}
+	for _, size := range []struct {
+		width, height int
+	}{
+		{100, 30},
+		{60, 10},
+	} {
+		m, _ := newBrowserModel(t, &testScanner{})
+		m = resize(t, m, size.width, size.height)
+		m.browserPath = cuePath
+		m.browserCue = true
+		m.browserEntries = entries
+
+		plain := ansi.Strip(m.View().Content)
+		if !strings.Contains(plain, "3:00") || !strings.Contains(plain, "2:00") {
+			t.Errorf("%dx%d view lacks CUE durations:\n%s", size.width, size.height, plain)
+		}
+		for i, line := range strings.Split(m.View().Content, "\n") {
+			if got := ansi.StringWidth(line); got != size.width {
+				t.Errorf("%dx%d view line %d width = %d", size.width, size.height, i, got)
+			}
+		}
+
+		// The rows themselves must also exactly fill the browser pane.
+		paneWidth := (size.width - 1) / 2
+		bodyHeight := size.height - headerRows - footerRows
+		for i, line := range m.browserLines(paneWidth, bodyHeight) {
+			if got := ansi.StringWidth(line); got != paneWidth {
+				t.Errorf("%dx%d browser line %d width = %d, want %d", size.width, size.height, i, got, paneWidth)
+			}
+		}
 	}
 }
 
@@ -612,11 +654,37 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 		if item.Start != 10*time.Second {
 			t.Errorf("start = %v, want 10s", item.Start)
 		}
-		if item.Duration != 180*time.Second {
-			t.Errorf("duration = %v, want playlist duration 3m", item.Duration)
+		if item.Duration != 2*time.Minute {
+			t.Errorf("duration = %v, want the CUE sheet duration 2m", item.Duration)
 		}
 		if item.Album != "Resolved Album" || item.Title != "One" {
 			t.Errorf("metadata = %#v, want resolved album and playlist title", item)
+		}
+	})
+
+	t.Run("mismatched EXTINF duration uses the CUE sheet", func(t *testing.T) {
+		dir := t.TempDir()
+		audio := writeTestFile(t, dir, "song.flac", "")
+		cuePath := writeTestFile(t, dir, "Album.cue", testCueSheet)
+		playlistPath := writeTestFile(t, dir, "list.m3u",
+			"#EXTM3U\n#EXTINF:999,Artist - One\n#EXT-X-PLAYER2-CUE:cue=Album.cue;track=1\nsong.flac\n")
+		sc := &testScanner{resolve: func(string, int) (library.Entry, error) {
+			return library.Entry{
+				Kind: library.KindCueTrack, Path: audio, CuePath: cuePath, TrackNo: 1,
+				Start: 10 * time.Second, Duration: 45 * time.Second,
+			}, nil
+		}}
+		m, _ := newBrowserModel(t, sc)
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+
+		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m = applyBrowserCmd(t, m, cmd)
+		items := m.queue.Snapshot().Items
+		if len(items) != 1 {
+			t.Fatalf("queue length = %d, want 1", len(items))
+		}
+		if got := items[0].Duration; got != 45*time.Second {
+			t.Errorf("duration = %v, want the sheet duration 45s", got)
 		}
 	})
 
@@ -659,6 +727,27 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 		}
 		if !strings.Contains(m.statusMsg, "skipped 1") {
 			t.Errorf("statusMsg = %q, want a skipped count", m.statusMsg)
+		}
+	})
+
+	t.Run("skips directories with audio extensions", func(t *testing.T) {
+		dir := t.TempDir()
+		present := writeTestFile(t, dir, "present.flac", "")
+		if err := os.Mkdir(filepath.Join(dir, "folder.flac"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\nfolder.flac\npresent.flac\n")
+		m, _ := newBrowserModel(t, &testScanner{})
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+
+		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m = applyBrowserCmd(t, m, cmd)
+		items := m.queue.Snapshot().Items
+		if len(items) != 1 || items[0].Path != present {
+			t.Fatalf("items = %#v, want only the regular file", items)
+		}
+		if !strings.Contains(m.statusMsg, "skipped 1") {
+			t.Errorf("statusMsg = %q, want the directory counted as skipped", m.statusMsg)
 		}
 	})
 }
@@ -862,7 +951,7 @@ func TestBrowserPlayRunsInCommand(t *testing.T) {
 		for !seenResult {
 			select {
 			case msg := <-result:
-				if _, ok := msg.(browserPlayResultMsg); ok {
+				if _, ok := msg.(transportResultMsg); ok {
 					seenResult = true
 				}
 				next, follow := m.Update(msg)
@@ -912,7 +1001,7 @@ func TestBrowserPlayRunsInCommand(t *testing.T) {
 		for !seenResult {
 			select {
 			case msg := <-result:
-				if _, ok := msg.(browserPlayResultMsg); ok {
+				if _, ok := msg.(transportResultMsg); ok {
 					seenResult = true
 				}
 				next, follow := m.Update(msg)

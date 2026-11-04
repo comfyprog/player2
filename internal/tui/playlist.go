@@ -23,17 +23,33 @@ type playerEventMsg struct {
 	ok    bool
 }
 
-// transportPlayResultMsg reports the outcome of an asynchronous Play call made
-// by a transport or playlist action.
-type transportPlayResultMsg struct {
+// transportKind identifies a serialized playback-changing operation.
+type transportKind int
+
+const (
+	transportPlay transportKind = iota
+	transportSeek
+	transportStop
+)
+
+// transportAction is one queued Play, Seek, or Stop request.
+type transportAction struct {
+	kind   transportKind
+	item   queue.Item
 	status string
-	err    error
+	delta  time.Duration
+	seq    uint64
 }
 
-// seekResultMsg reports the outcome of an asynchronous SeekBy call.
-type seekResultMsg struct {
-	delta time.Duration
-	err   error
+// transportResultMsg reports the outcome of one serialized transport
+// operation. seq identifies the request so a stale result cannot apply its
+// status over a newer request.
+type transportResultMsg struct {
+	seq    uint64
+	kind   transportKind
+	status string
+	delta  time.Duration
+	err    error
 }
 
 // queueRestoredMsg is the result of loading a saved queue. epoch records the
@@ -58,6 +74,9 @@ type queueMetadataMsg struct {
 	info meta.Info
 	err  error
 }
+
+// probeConcurrency bounds how many metadata probes may run at once.
+const probeConcurrency = 4
 
 // playlistBodyRows is the number of list rows available below the pane title.
 func (m *Model) playlistBodyRows() int {
@@ -282,15 +301,54 @@ func (m *Model) selectPlaylistLast() {
 	m.clampPlaylist()
 }
 
-// playItem returns a command that starts playback. Play opens a decoder and may
-// block, so it never runs inside Update.
+// playItem queues a Play request. Play opens a decoder and may block, so it
+// never runs inside Update.
 func (m *Model) playItem(item queue.Item, status string) tea.Cmd {
+	return m.requestTransport(transportAction{
+		kind:   transportPlay,
+		item:   item,
+		status: status,
+	})
+}
+
+// requestTransport serializes playback-changing operations. While one is in
+// flight, the latest new request is kept as the single pending action (Stop
+// replaces any pending Play/Seek). A request made while idle becomes a command
+// immediately. The returned command must run outside Update.
+func (m *Model) requestTransport(action transportAction) tea.Cmd {
 	if m.player == nil {
 		return nil
 	}
+	m.transportSeq++
+	action.seq = m.transportSeq
+	if m.transportBusy {
+		m.pendingTransport = &action
+		return nil
+	}
+	m.transportBusy = true
+	return m.dispatchTransport(action)
+}
+
+// dispatchTransport returns the command for one action. The caller has already
+// marked the transport busy.
+func (m *Model) dispatchTransport(action transportAction) tea.Cmd {
 	player := m.player
 	return func() tea.Msg {
-		return transportPlayResultMsg{status: status, err: player.Play(item)}
+		result := transportResultMsg{
+			seq:    action.seq,
+			kind:   action.kind,
+			status: action.status,
+			delta:  action.delta,
+		}
+		switch action.kind {
+		case transportPlay:
+			result.err = player.Play(action.item)
+		case transportSeek:
+			result.err = player.SeekBy(action.delta)
+		case transportStop:
+			player.Stop()
+		}
+		return result
 	}
 }
 
@@ -352,14 +410,14 @@ func (m *Model) actionPause() tea.Cmd {
 	return m.playItem(item, "playing "+displayTitle(item))
 }
 
-// actionStop stops playback.
+// actionStop stops playback. The status is immediate; the actual Stop is
+// serialized behind any Play already in flight.
 func (m *Model) actionStop() tea.Cmd {
-	if m.player != nil {
-		m.player.Stop()
-		m.refresh()
-	}
 	m.setStatusOK("stopped")
-	return nil
+	if m.player == nil {
+		return nil
+	}
+	return m.requestTransport(transportAction{kind: transportStop})
 }
 
 // actionNext advances the queue and plays the next item.
@@ -392,15 +450,9 @@ func (m *Model) actionPrevious() tea.Cmd {
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
-// actionSeek returns a command that seeks by delta.
+// actionSeek queues a seek by delta.
 func (m *Model) actionSeek(delta time.Duration) tea.Cmd {
-	if m.player == nil {
-		return nil
-	}
-	player := m.player
-	return func() tea.Msg {
-		return seekResultMsg{delta: delta, err: player.SeekBy(delta)}
-	}
+	return m.requestTransport(transportAction{kind: transportSeek, delta: delta})
 }
 
 // changeVolume moves the volume by delta within 0..100.
@@ -449,7 +501,9 @@ func (m *Model) toggleMute() {
 func (m *Model) toggleShuffle() tea.Cmd {
 	enabled := !m.queue.Snapshot().Shuffle
 	m.queue.SetShuffle(enabled)
-	m.bumpQueueEpoch()
+	// Shuffle/repeat do not replace items or the current item, so they do not
+	// invalidate a pending startup restore. saveQueue no-ops until the restore
+	// finishes, which lets the successful restore decide what to persist.
 	if enabled {
 		m.setStatusOK("shuffle on")
 	} else {
@@ -461,7 +515,7 @@ func (m *Model) toggleShuffle() tea.Cmd {
 // cycleRepeat advances the repeat mode and persists the queue.
 func (m *Model) cycleRepeat() tea.Cmd {
 	mode := m.queue.CycleRepeat()
-	m.bumpQueueEpoch()
+	// Like shuffle, repeat is a setting change rather than a queue mutation.
 	switch mode {
 	case queue.RepeatAll:
 		m.setStatusOK("repeat all")
@@ -533,15 +587,16 @@ func (m *Model) playlistRemove() tea.Cmd {
 		return nil
 	}
 	m.bumpQueueEpoch()
+	var stop tea.Cmd
 	if hadPrevious && removed.ID == previous.ID {
-		if m.player != nil {
-			m.player.Stop()
-			m.refresh()
-		}
+		stop = m.requestTransport(transportAction{kind: transportStop})
 	}
 	m.clampPlaylist()
 	m.setStatusOK("removed " + displayTitle(removed))
-	return m.saveQueue()
+	if stop == nil {
+		return m.saveQueue()
+	}
+	return tea.Batch(stop, m.saveQueue())
 }
 
 // playlistMove moves the selected item by direction (-1 up, +1 down).
@@ -561,15 +616,15 @@ func (m *Model) playlistMove(direction int) tea.Cmd {
 func (m *Model) playlistClear() tea.Cmd {
 	m.queue.Clear()
 	m.bumpQueueEpoch()
-	if m.player != nil {
-		m.player.Stop()
-		m.refresh()
-	}
+	stop := m.requestTransport(transportAction{kind: transportStop})
 	m.playlistSelected = 0
 	m.playlistOffset = 0
 	m.probing = make(map[uint64]string)
 	m.setStatusOK("queue cleared")
-	return m.saveQueue()
+	if stop == nil {
+		return m.saveQueue()
+	}
+	return tea.Batch(stop, m.saveQueue())
 }
 
 // bumpQueueEpoch records a user/browser queue mutation so a late restore is
@@ -581,28 +636,45 @@ func (m *Model) bumpQueueEpoch() {
 	m.restorePending = false
 }
 
-// applyTransportPlayResult applies the outcome of an asynchronous Play call.
-func (m *Model) applyTransportPlayResult(msg transportPlayResultMsg) {
-	if msg.err != nil {
-		m.setStatusError("play: " + msg.err.Error())
-		return
-	}
-	m.refresh()
-	status := msg.status
-	if status == "" {
-		status = "playing"
-	}
-	m.setStatusOK(status)
-}
+// applyTransportResult applies the outcome of one serialized transport
+// operation and then starts the pending request, if any. Status and cached
+// player state are only refreshed when this result belongs to the latest
+// request.
+func (m *Model) applyTransportResult(msg transportResultMsg) tea.Cmd {
+	m.transportBusy = false
 
-// applySeekResult reports a seek failure and refreshes the cached status.
-func (m *Model) applySeekResult(msg seekResultMsg) {
-	if msg.err != nil {
-		m.setStatusError("seek: " + msg.err.Error())
-		return
+	if msg.seq == m.transportSeq {
+		switch {
+		case msg.err != nil:
+			switch msg.kind {
+			case transportSeek:
+				m.setStatusError("seek: " + msg.err.Error())
+			default:
+				m.setStatusError("play: " + msg.err.Error())
+			}
+		default:
+			m.refresh()
+			switch msg.kind {
+			case transportSeek:
+				m.setStatusOK(fmt.Sprintf("seek %+ds", int(msg.delta/time.Second)))
+			case transportStop:
+				m.setStatusOK("stopped")
+			default:
+				status := msg.status
+				if status == "" {
+					status = "playing"
+				}
+				m.setStatusOK(status)
+			}
+		}
 	}
-	m.refresh()
-	m.setStatusOK(fmt.Sprintf("seek %+ds", int(msg.delta/time.Second)))
+
+	if pending := m.pendingTransport; pending != nil {
+		m.pendingTransport = nil
+		m.transportBusy = true
+		return m.dispatchTransport(*pending)
+	}
+	return nil
 }
 
 // saveQueue persists the current queue with single-flight coalescing. A
@@ -610,6 +682,15 @@ func (m *Model) applySeekResult(msg seekResultMsg) {
 // snapshot is written afterwards.
 func (m *Model) saveQueue() tea.Cmd {
 	if m.store == nil {
+		return nil
+	}
+	// While the startup restore is pending the in-memory queue is not
+	// authoritative. Do not write (not even an empty queue); the successful
+	// restore path will save if it pruned items.
+	if m.restorePending {
+		if m.saving {
+			m.saveDirty = true
+		}
 		return nil
 	}
 	if m.saving {
@@ -708,6 +789,9 @@ func (m *Model) probeItems() tea.Cmd {
 	if m.probing == nil {
 		m.probing = make(map[uint64]string)
 	}
+	if m.probeSem == nil {
+		m.probeSem = make(chan struct{}, probeConcurrency)
+	}
 
 	var cmds []tea.Cmd
 	for _, item := range m.queue.Snapshot().Items {
@@ -715,8 +799,10 @@ func (m *Model) probeItems() tea.Cmd {
 			continue
 		}
 		m.probing[item.ID] = item.Path
-		id, path, prober := item.ID, item.Path, m.prober
+		id, path, prober, sem := item.ID, item.Path, m.prober, m.probeSem
 		cmds = append(cmds, func() tea.Msg {
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			info, err := prober.Probe(context.Background(), path)
 			return queueMetadataMsg{id: id, path: path, info: info, err: err}
 		})
@@ -845,6 +931,12 @@ func (m *Model) waitForPlayerEvent() tea.Cmd {
 // advances for anything else.
 func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 	if !msg.ok {
+		return nil
+	}
+	// A late finished/error event from a stream that has already been replaced
+	// must not advance or report against the newly current item.
+	current, hasCurrent := m.queue.Current()
+	if !hasCurrent || msg.event.ItemID != current.ID {
 		return nil
 	}
 	m.refresh()

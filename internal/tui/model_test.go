@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"player2/internal/config"
 )
@@ -79,5 +81,25 @@ func TestNewWithConfigDefaultsWhenStartDirEmpty(t *testing.T) {
 	}
 	if m.browserPath != m.startDir {
 		t.Errorf("browserPath = %q, want startDir %q", m.browserPath, m.startDir)
+	}
+}
+
+func TestNewAppliesConfiguredVolumeToPlayer(t *testing.T) {
+	fp := newFakePlayer()
+	m := newTestModel(t, func(opts *Options) {
+		opts.Player = fp
+		opts.Config.Volume = 42
+	})
+	if len(fp.volumes) != 1 || fp.volumes[0] != 42 {
+		t.Fatalf("SetVolume calls = %v, want [42]", fp.volumes)
+	}
+	if got := m.status.Volume; got != 42 {
+		t.Errorf("cached volume = %d, want 42", got)
+	}
+
+	m = resize(t, m, 100, 30)
+	header := firstLine(ansi.Strip(m.View().Content))
+	if !strings.Contains(header, "vol 42") {
+		t.Errorf("header = %q, want configured volume", header)
 	}
 }

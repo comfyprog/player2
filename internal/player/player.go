@@ -69,11 +69,13 @@ const (
 	EventError
 )
 
-// Event reports that the current stream finished or failed. The current queue
-// item is tracked by the caller; events carry only the error context they need.
+// Event reports that the current stream finished or failed. ItemID identifies
+// the queue item the event belongs to so a late event from a replaced stream
+// cannot advance a newer item.
 type Event struct {
-	Type EventType
-	Err  error
+	Type   EventType
+	ItemID uint64
+	Err    error
 }
 
 // Options configures the PCM ring and decoder output format. Non-positive
@@ -584,7 +586,7 @@ func (p *Player) tickLocked() (Event, bool) {
 	// position is always the exact item duration.
 	if p.item.Duration > 0 && pos >= p.item.Duration {
 		p.completeLocked(p.item.Duration)
-		return Event{Type: EventFinished}, true
+		return Event{Type: EventFinished, ItemID: p.item.ID}, true
 	}
 
 	if done && decErr != nil {
@@ -593,7 +595,7 @@ func (p *Player) tickLocked() (Event, bool) {
 		}
 		p.err = decErr
 		p.completeLocked(pos)
-		return Event{Type: EventError, Err: decErr}, true
+		return Event{Type: EventError, ItemID: p.item.ID, Err: decErr}, true
 	}
 
 	// Unknown duration, or a file shorter than its metadata: the track ends
@@ -607,7 +609,7 @@ func (p *Player) tickLocked() (Event, bool) {
 			final = p.item.Duration
 		}
 		p.completeLocked(final)
-		return Event{Type: EventFinished}, true
+		return Event{Type: EventFinished, ItemID: p.item.ID}, true
 	}
 
 	return Event{}, false

@@ -329,7 +329,7 @@ func TestPlayFinishesAtKnownDuration(t *testing.T) {
 	sink := &fakeSink{}
 	p := mustNew(t, dec, sink, Options{})
 
-	item := queue.Item{Path: "/music/one.wav", Title: "one", Duration: time.Second}
+	item := queue.Item{ID: 7, Path: "/music/one.wav", Title: "one", Duration: time.Second}
 	if err := p.Play(item); err != nil {
 		t.Fatalf("Play() error = %v", err)
 	}
@@ -353,6 +353,9 @@ func TestPlayFinishesAtKnownDuration(t *testing.T) {
 	ev := waitEvent(t, p)
 	if ev.Type != EventFinished {
 		t.Fatalf("event = %+v, want finished", ev)
+	}
+	if ev.ItemID != item.ID {
+		t.Errorf("event ItemID = %d, want %d", ev.ItemID, item.ID)
 	}
 	st := p.Status()
 	if st.State != StateStopped {

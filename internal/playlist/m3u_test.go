@@ -534,3 +534,61 @@ func entryNames(entries []os.DirEntry) []string {
 	}
 	return names
 }
+
+func TestWriteRoundtripPreservesTrickyRelativeNames(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{"#song.flac", " leading.flac", "trailing.flac "}
+	items := make([]queue.Item, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		writeText(t, path, "audio")
+		items = append(items, queue.Item{Path: path})
+	}
+
+	playlistPath := filepath.Join(dir, "list.m3u")
+	if err := Write(playlistPath, items); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	data, err := os.ReadFile(playlistPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		want := "./" + name
+		if !strings.Contains(string(data), want+"\n") {
+			t.Errorf("playlist missing %q line:\n%s", want, data)
+		}
+	}
+
+	entries := mustLoad(t, playlistPath)
+	if len(entries) != len(names) {
+		t.Fatalf("got %d entries, want %d: %+v", len(entries), len(names), entries)
+	}
+	for i, name := range names {
+		want := filepath.Join(dir, name)
+		if entries[i].Path != want {
+			t.Errorf("entry %d Path = %q, want %q", i, entries[i].Path, want)
+		}
+	}
+}
+
+func TestLoadPreservesPathWhitespaceAndHashNames(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "list.m3u")
+	writeText(t, path, "#EXTM3U\n./#song.flac\n leading.flac\ntrailing.flac \n")
+
+	entries := mustLoad(t, path)
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3: %+v", len(entries), entries)
+	}
+	wants := []string{
+		filepath.Join(dir, "#song.flac"),
+		filepath.Join(dir, " leading.flac"),
+		filepath.Join(dir, "trailing.flac "),
+	}
+	for i, want := range wants {
+		if entries[i].Path != want {
+			t.Errorf("entry %d Path = %q, want %q", i, entries[i].Path, want)
+		}
+	}
+}

@@ -125,6 +125,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// Apply the configured volume immediately; the TUI does this too, but
+	// doing it here keeps startup behavior obvious.
+	engine.SetVolume(cfg.Volume)
+
 	closed := false
 	closeEngine := func() error {
 		if closed {
@@ -177,18 +181,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flushErr := model.FlushQueue()
 	closeErr := closeEngine()
 
+	exitCode := 0
 	if flushErr != nil {
 		fmt.Fprintf(stderr, "player2: save queue: %v\n", flushErr)
 		logger.Printf("save queue: %v", flushErr)
+		exitCode = 1
 	}
 	if closeErr != nil {
 		fmt.Fprintf(stderr, "player2: close audio output: %v\n", closeErr)
 		logger.Printf("close audio output: %v", closeErr)
+		exitCode = 1
 	}
 	if runErr != nil {
 		fmt.Fprintf(stderr, "player2: %v\n", runErr)
 		logger.Printf("program error: %v", runErr)
-		return 1
+		exitCode = 1
+	}
+	if exitCode != 0 {
+		return exitCode
 	}
 	logger.Printf("player2 exiting")
 	return 0

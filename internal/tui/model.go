@@ -120,6 +120,20 @@ type Model struct {
 	// the value is the probed path so reused IDs cannot be mistaken.
 	probing map[uint64]string
 
+	// probeSem bounds concurrent metadata probes. Bubble Tea runs each command
+	// in its own goroutine, so a shared semaphore prevents a large add/restore
+	// from spawning one ffprobe per item at once.
+	probeSem chan struct{}
+
+	// Transport operations that change playback (Play, Seek, Stop) are
+	// serialized. transportBusy records that one is running; pendingTransport
+	// holds the single latest request made while it was busy. transportSeq
+	// identifies the latest request so a stale result cannot overwrite newer
+	// status.
+	transportBusy    bool
+	pendingTransport *transportAction
+	transportSeq     uint64
+
 	// queueEpoch increments on every user/browser queue mutation. A restore
 	// started earlier is dropped if the queue changed while it was loading.
 	queueEpoch uint64
@@ -158,10 +172,18 @@ func New(opts Options) *Model {
 		statusMsg:  "ready",
 		styles:     NewStyles(cfg.Colors),
 		probing:    make(map[uint64]string),
+		probeSem:   make(chan struct{}, probeConcurrency),
 
 		// Restore is asynchronous, so until it succeeds (or the user changes
 		// the queue) exit must not overwrite the persisted queue.
 		restorePending: cfg.RestoreQueue && opts.Store != nil,
+	}
+
+	// The engine defaults to 70; apply the configured level before the first
+	// render so the header and the output device agree.
+	if opts.Player != nil {
+		opts.Player.SetVolume(cfg.Volume)
+		m.status.Volume = cfg.Volume
 	}
 
 	keys, err := NewKeyMap(cfg)
@@ -244,10 +266,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case browserPlayMsg:
 		return m, m.applyBrowserPlay(msg)
 
-	case browserPlayResultMsg:
-		m.applyBrowserPlayResult(msg)
-		return m, nil
-
 	case browserAddMsg:
 		return m, m.applyBrowserAdd(msg)
 
@@ -257,13 +275,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.handlePlayerEvent(msg), m.waitForPlayerEvent())
 
-	case transportPlayResultMsg:
-		m.applyTransportPlayResult(msg)
-		return m, nil
-
-	case seekResultMsg:
-		m.applySeekResult(msg)
-		return m, nil
+	case transportResultMsg:
+		return m, m.applyTransportResult(msg)
 
 	case queueRestoredMsg:
 		return m, m.applyQueueRestored(msg)

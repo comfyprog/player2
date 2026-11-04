@@ -38,13 +38,6 @@ type browserPlayMsg struct {
 	err      error
 }
 
-// browserPlayResultMsg reports the outcome of the asynchronous Play call.
-type browserPlayResultMsg struct {
-	gen    uint64
-	status string
-	err    error
-}
-
 // browserAddMsg is the result of expanding a selection into queue items.
 type browserAddMsg struct {
 	gen    uint64
@@ -142,9 +135,36 @@ func (m *Model) browserLines(width, height int) []string {
 		}
 		entry := visible[index]
 		style := m.browserEntryStyle(entry.Kind, index == selected)
-		lines[row+1] = style.Render(fitPlain(entry.Name, width))
+		lines[row+1] = style.Render(browserRow(entry, width))
 	}
 	return lines
+}
+
+// browserRow formats one browser row. CUE tracks show their duration
+// right-aligned, matching the playlist and the CUE acceptance criteria; other
+// entries remain name-only. The result is exactly width cells.
+func browserRow(entry library.Entry, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if entry.Kind != library.KindCueTrack {
+		return fitPlain(entry.Name, width)
+	}
+
+	right := "--:--"
+	if entry.Duration > 0 {
+		right = formatDuration(entry.Duration)
+	}
+	rightWidth := ansi.StringWidth(right)
+	if rightWidth >= width {
+		return truncatePlain(right, width)
+	}
+
+	leftWidth := width - rightWidth - 1
+	if leftWidth <= 0 {
+		return strings.Repeat(" ", width-rightWidth) + right
+	}
+	return fitPlain(entry.Name, leftWidth) + " " + right
 }
 
 // browserEntryStyle chooses the visual role for one entry, with selection
@@ -424,12 +444,13 @@ func (m *Model) browserOpen() tea.Cmd {
 		return nil
 	case library.KindPlaylist:
 		// Stop the previous stream before the asynchronous load replaces the
-		// queue; Stop is a fast control call.
-		if m.player != nil {
-			m.player.Stop()
-			m.refresh()
+		// queue. The stop is serialized with any Play already in flight.
+		stop := m.requestTransport(transportAction{kind: transportStop})
+		play := m.playPlaylist(entry.Path)
+		if stop == nil {
+			return play
 		}
-		return m.playPlaylist(entry.Path)
+		return tea.Batch(stop, play)
 	case library.KindAudio, library.KindCueTrack:
 		return m.playLevel(entry)
 	default:
@@ -631,28 +652,16 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 		return queueWork
 	}
 
-	gen := msg.gen
-	status := msg.status
-	play := func() tea.Msg {
-		return browserPlayResultMsg{
-			gen:    gen,
-			status: status,
-			err:    player.Play(item),
-		}
+	play := m.requestTransport(transportAction{
+		kind:   transportPlay,
+		item:   item,
+		status: msg.status,
+	})
+	if play == nil {
+		m.setStatusOK(msg.status)
+		return queueWork
 	}
 	return tea.Batch(play, queueWork)
-}
-
-// applyBrowserPlayResult applies the status of an asynchronous Play call.
-func (m *Model) applyBrowserPlayResult(msg browserPlayResultMsg) {
-	if msg.gen != m.browserGen {
-		return
-	}
-	if msg.err != nil {
-		m.setStatusError("play: " + msg.err.Error())
-		return
-	}
-	m.setStatusOK(msg.status)
 }
 
 // applyBrowserAdd appends expanded items to the existing queue.
@@ -668,11 +677,15 @@ func (m *Model) applyBrowserAdd(msg browserAddMsg) tea.Cmd {
 		m.setStatusError(status)
 		return nil
 	}
-	if len(msg.items) > 0 {
-		m.queue.Append(msg.items...)
-		m.bumpQueueEpoch()
-		m.clampPlaylist()
+	if len(msg.items) == 0 {
+		// Nothing was added, so the queue did not change: report the status
+		// without probing or saving (and without disturbing a pending restore).
+		m.setStatusOK(msg.status)
+		return nil
 	}
+	m.queue.Append(msg.items...)
+	m.bumpQueueEpoch()
+	m.clampPlaylist()
 	m.setStatusOK(msg.status)
 	return m.afterQueueChange()
 }
@@ -932,9 +945,9 @@ func playlistQueueItem(ctx context.Context, scanner Scanner, entry playlist.Entr
 				item.CuePath = entry.CuePath
 				item.CueTrack = entry.CueTrack
 				item.Start = track.Start
-				if item.Duration <= 0 {
-					item.Duration = track.Duration
-				}
+				// The CUE sheet is authoritative for a resolved track; an
+				// EXTINF duration may be stale or describe the whole file.
+				item.Duration = track.Duration
 				item.Album = track.Meta.Album
 				item.TrackNo = track.TrackNo
 				if item.Title == "" {
@@ -957,7 +970,7 @@ func playlistQueueItem(ctx context.Context, scanner Scanner, entry playlist.Entr
 	if item.Path == "" {
 		return queue.Item{}, true
 	}
-	if _, err := os.Stat(item.Path); err != nil {
+	if info, err := os.Stat(item.Path); err != nil || !info.Mode().IsRegular() {
 		return queue.Item{}, true
 	}
 	if item.Title == "" {

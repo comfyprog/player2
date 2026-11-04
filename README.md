@@ -2,9 +2,10 @@
 
 player2 is a filesystem-first music player for Linux terminals. It browses
 local directories in a MOC-like two-pane interface, builds a playback queue,
-handles CUE sheets as virtual album folders, and decodes anything FFmpeg can
-read. There is no library index, database, account, or network access: every
-view reads the filesystem and playback uses local files only.
+handles CUE sheets as virtual album folders, and plays audio files whose
+extensions are recognized by the scanner through FFmpeg. There is no library
+index, database, account, or network access: every view reads the filesystem
+and playback uses local files only.
 
 ## Install and build
 
@@ -207,16 +208,19 @@ Boundary rules:
 
 ## Supported formats
 
-Any format FFmpeg can decode works through the FFmpeg backend. The built-in
-extension list is:
+Discovering audio files depends on their extension, not on probing every file:
+the scanner only shows files with the built-in extensions or those added with
+`extra_audio_extensions`. The built-in list is:
 
 ```text
 .aac .ac3 .aif .aifc .aiff .alac .ape .caf .dff .dsf .dts .flac .m4a .m4b
 .mka .mp2 .mp3 .mpc .oga .ogg .opus .spx .tta .w64 .wav .wma .wv
 ```
 
-Add more extensions with `extra_audio_extensions`; decoding is always delegated
-to FFmpeg, so the installed FFmpeg build must include the relevant codec.
+If FFmpeg on your system can decode another container or codec, add its
+extension to `extra_audio_extensions` (for example `[".mp4", ".webm"]`) so the
+scanner discovers those files. Decoding is always delegated to FFmpeg, so the
+installed build must include the relevant demuxer and codec.
 
 ## Local files only
 

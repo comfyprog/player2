@@ -2,7 +2,9 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -341,7 +343,8 @@ func TestPauseResumeStopFromStopped(t *testing.T) {
 		t.Errorf("cached state = %v, want playing", m.status.State)
 	}
 
-	m = press(t, m, runeKey('x'))
+	m, cmd := pressForCmd(t, m, runeKey('x'))
+	m = runCmd(t, m, cmd)
 	if fp.stops != 1 {
 		t.Errorf("stops = %d, want 1", fp.stops)
 	}
@@ -350,7 +353,7 @@ func TestPauseResumeStopFromStopped(t *testing.T) {
 	}
 
 	fp.status.State = player.StateStopped
-	m, cmd := pressForCmd(t, m, specialKey(tea.KeySpace))
+	m, cmd = pressForCmd(t, m, specialKey(tea.KeySpace))
 	m = runCmd(t, m, cmd)
 	if len(fp.played) != 1 {
 		t.Fatalf("played = %#v, want the current item", fp.played)
@@ -505,7 +508,7 @@ func TestNextPreviousRepeatAndSelectionFollow(t *testing.T) {
 }
 
 func TestRepeatKeyCyclesAndPersists(t *testing.T) {
-	m, _ := newPlaylistModel(t, nil)
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Config.RestoreQueue = false })
 	store := m.store.(*fakeStore)
 
 	m, cmd := pressForCmd(t, m, runeKey('r'))
@@ -528,7 +531,7 @@ func TestRepeatKeyCyclesAndPersists(t *testing.T) {
 }
 
 func TestShuffleKeyTogglesAndPersists(t *testing.T) {
-	m, _ := newPlaylistModel(t, nil)
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Config.RestoreQueue = false })
 	store := m.store.(*fakeStore)
 
 	m, cmd := pressForCmd(t, m, runeKey('s'))
@@ -554,7 +557,8 @@ func TestAutoAdvanceFinished(t *testing.T) {
 	)
 	m.playlistSelected = 0
 
-	cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished}, ok: true})
+	current, _ := m.queue.Current()
+	cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
 	m = runCmd(t, m, cmd)
 	if got := m.queue.Snapshot().Current; got != 1 {
 		t.Errorf("current = %d after finish, want 1", got)
@@ -568,7 +572,8 @@ func TestAutoAdvanceFinished(t *testing.T) {
 
 	// The selection moved away earlier, so auto-advance leaves it alone.
 	m.playlistSelected = 0
-	cmd = m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished}, ok: true})
+	current, _ = m.queue.Current()
+	cmd = m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
 	m = runCmd(t, m, cmd)
 	if got := m.queue.Snapshot().Current; got != 1 {
 		t.Errorf("current at repeat-off end = %d, want 1", got)
@@ -590,7 +595,8 @@ func TestAutoAdvanceRepeatOneAndRepeatAll(t *testing.T) {
 		)
 		m.queue.SetRepeat(queue.RepeatOne)
 
-		cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished}, ok: true})
+		current, _ := m.queue.Current()
+		cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
 		m = runCmd(t, m, cmd)
 		if got := m.queue.Snapshot().Current; got != 0 {
 			t.Errorf("current = %d, want 0", got)
@@ -609,7 +615,8 @@ func TestAutoAdvanceRepeatOneAndRepeatAll(t *testing.T) {
 		m.queue.SetCurrent(1)
 		m.queue.SetRepeat(queue.RepeatAll)
 
-		cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished}, ok: true})
+		current, _ := m.queue.Current()
+		cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
 		m = runCmd(t, m, cmd)
 		if got := m.queue.Snapshot().Current; got != 0 {
 			t.Errorf("current = %d, want wrap to 0", got)
@@ -627,8 +634,9 @@ func TestPlayerErrorEventDoesNotAdvance(t *testing.T) {
 		playlistItem("Two", "", 2, time.Minute),
 	)
 
+	current, _ := m.queue.Current()
 	cmd := m.handlePlayerEvent(playerEventMsg{
-		event: player.Event{Type: player.EventError, Err: errors.New("decoder died")},
+		event: player.Event{Type: player.EventError, ItemID: current.ID, Err: errors.New("decoder died")},
 		ok:    true,
 	})
 	m = runCmd(t, m, cmd)
@@ -915,7 +923,10 @@ func (s *blockingStore) snapshots() []queue.Snapshot {
 
 func TestSaveQueueCoalescesWhileSaving(t *testing.T) {
 	store := &blockingStore{started: make(chan struct{}, 1), release: make(chan struct{})}
-	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+	m, _ := newPlaylistModel(t, func(opts *Options) {
+		opts.Config.RestoreQueue = false
+		opts.Store = store
+	})
 	m.queue.Append(playlistItem("One", "", 0, time.Minute))
 
 	first := m.saveQueue()
@@ -965,7 +976,7 @@ func TestSaveQueueCoalescesWhileSaving(t *testing.T) {
 }
 
 func TestSaveErrorSetsStatus(t *testing.T) {
-	m, _ := newPlaylistModel(t, nil)
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Config.RestoreQueue = false })
 	store := m.store.(*fakeStore)
 	store.saveErr = errors.New("disk full")
 	m.queue.Append(playlistItem("One", "", 0, time.Minute))
@@ -1479,7 +1490,7 @@ func TestBrowserPlaySchedulesQueueWorkBeforePlayCompletes(t *testing.T) {
 			if follow != nil {
 				runAsyncCmd(follow, msgs)
 			}
-			if _, ok := msg.(browserPlayResultMsg); ok {
+			if _, ok := msg.(transportResultMsg); ok {
 				if m.statusIsError {
 					t.Errorf("statusIsError = true after successful play: %q", m.statusMsg)
 				}
@@ -1574,10 +1585,428 @@ func TestPlayerEventUpdateResubscribes(t *testing.T) {
 	m.queue.Append(playlistItem("One", "", 1, time.Minute))
 
 	// Update returns the event handler work plus a fresh wait command.
-	_, follow := m.Update(playerEventMsg{event: player.Event{Type: player.EventFinished}, ok: true})
+	current, _ := m.queue.Current()
+	_, follow := m.Update(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
 	if follow == nil {
 		t.Fatal("finished event did not return a follow-up command")
 	}
 	// Do not execute the follow-up: its event wait would block until the next
 	// real event; handlePlayerEvent behavior is covered above.
+}
+
+// serialPlayer blocks Play calls so tests can observe transport ordering.
+type serialPlayer struct {
+	*fakePlayer
+	mu      sync.Mutex
+	active  int
+	maxSeen int
+	played  []queue.Item
+	stops   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func newSerialPlayer() *serialPlayer {
+	return &serialPlayer{
+		fakePlayer: newFakePlayer(),
+		started:    make(chan struct{}, 16),
+		release:    make(chan struct{}, 16),
+	}
+}
+
+func (p *serialPlayer) Play(item queue.Item) error {
+	p.mu.Lock()
+	p.active++
+	if p.active > p.maxSeen {
+		p.maxSeen = p.active
+	}
+	p.played = append(p.played, item)
+	p.mu.Unlock()
+
+	p.started <- struct{}{}
+	<-p.release
+
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *serialPlayer) Stop() {
+	p.fakePlayer.Stop()
+	p.mu.Lock()
+	p.stops++
+	p.mu.Unlock()
+}
+
+func (p *serialPlayer) snapshot() (played []queue.Item, maxSeen, stops int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]queue.Item(nil), p.played...), p.maxSeen, p.stops
+}
+
+func TestTransportSerializesRapidPlayRequests(t *testing.T) {
+	sp := newSerialPlayer()
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Player = sp })
+	m.queue.Append(
+		playlistItem("One", "", 1, time.Minute),
+		playlistItem("Two", "", 2, time.Minute),
+		playlistItem("Three", "", 3, time.Minute),
+	)
+	m.playlistSelected = 0
+	m.queue.SetCurrent(0)
+
+	msgs := make(chan tea.Msg, 64)
+	m, cmd := pressForCmd(t, m, runeKey('n'))
+	if cmd == nil {
+		t.Fatal("first next returned no command")
+	}
+	runAsyncCmd(cmd, msgs)
+	select {
+	case <-sp.started:
+	case <-time.After(time.Second):
+		t.Fatal("first Play did not start")
+	}
+
+	// While the first Play is blocked, request the next item. It must become
+	// the single pending action rather than a second in-flight Play.
+	m, second := pressForCmd(t, m, runeKey('n'))
+	if m.pendingTransport == nil {
+		t.Fatal("second Play was not stored as pending")
+	}
+	if second != nil {
+		runAsyncCmd(second, msgs)
+	}
+	if got := m.queue.Snapshot().Current; got != 2 {
+		t.Fatalf("queue current = %d, want 2", got)
+	}
+	if played, maxSeen, _ := sp.snapshot(); len(played) != 1 || maxSeen != 1 {
+		t.Fatalf("before release played=%d maxConcurrent=%d, want 1/1", len(played), maxSeen)
+	}
+
+	sp.release <- struct{}{}
+
+	// The first result applies no stale status and dispatches the pending Play.
+	deadline := time.After(2 * time.Second)
+	startedSecond := false
+	for !startedSecond {
+		select {
+		case <-sp.started:
+			startedSecond = true
+		case msg := <-msgs:
+			next, follow := m.Update(msg)
+			m = next.(*Model)
+			if follow != nil {
+				runAsyncCmd(follow, msgs)
+			}
+		case <-deadline:
+			t.Fatal("pending Play did not start")
+		}
+	}
+	sp.release <- struct{}{}
+
+	deadline = time.After(2 * time.Second)
+	for m.transportBusy {
+		select {
+		case msg := <-msgs:
+			next, f := m.Update(msg)
+			m = next.(*Model)
+			if f != nil {
+				runAsyncCmd(f, msgs)
+			}
+		case <-deadline:
+			t.Fatal("transport stayed busy after the pending Play completed")
+		}
+	}
+
+	played, maxSeen, _ := sp.snapshot()
+	if maxSeen != 1 {
+		t.Errorf("max concurrent Play calls = %d, want 1", maxSeen)
+	}
+	if len(played) != 2 {
+		t.Fatalf("Play calls = %d, want 2", len(played))
+	}
+	current, _ := m.queue.Current()
+	if played[len(played)-1].Title != current.Title {
+		t.Errorf("last played = %q, want current item %q", played[len(played)-1].Title, current.Title)
+	}
+}
+
+func TestStaleFinishedEventDoesNotAdvanceAfterManualNext(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("One", "", 1, time.Minute),
+		playlistItem("Two", "", 2, time.Minute),
+	)
+	old, _ := m.queue.Current()
+
+	m, cmd := pressForCmd(t, m, runeKey('n'))
+	m = runCmd(t, m, cmd)
+	current, _ := m.queue.Current()
+	if current.Title != "Two" {
+		t.Fatalf("current after next = %q, want Two", current.Title)
+	}
+	playedBefore := len(fp.played)
+
+	cmd = m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: old.ID},
+		ok:    true,
+	})
+	m = runCmd(t, m, cmd)
+	if got := m.queue.Snapshot().Current; got != 1 {
+		t.Errorf("stale finish advanced the queue to %d, want 1", got)
+	}
+	if len(fp.played) != playedBefore {
+		t.Errorf("stale finish started %d extra Play call(s)", len(fp.played)-playedBefore)
+	}
+}
+
+func TestStopAndClearWhilePlayInFlightEventuallyStop(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		clear bool
+	}{
+		{name: "stop"},
+		{name: "clear", clear: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := newSerialPlayer()
+			m, _ := newPlaylistModel(t, func(opts *Options) { opts.Player = sp })
+			m.queue.Append(
+				playlistItem("One", "", 1, time.Minute),
+				playlistItem("Two", "", 2, time.Minute),
+			)
+			m.queue.SetCurrent(0)
+			m.playlistSelected = 0
+
+			msgs := make(chan tea.Msg, 64)
+			m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+			if cmd == nil {
+				t.Fatal("play returned no command")
+			}
+			runAsyncCmd(cmd, msgs)
+			select {
+			case <-sp.started:
+			case <-time.After(time.Second):
+				t.Fatal("Play did not start")
+			}
+
+			if tc.clear {
+				m, _ = pressForCmd(t, m, runeKey('c'))
+				var confirm tea.Cmd
+				m, confirm = pressForCmd(t, m, runeKey('y'))
+				if confirm != nil {
+					runAsyncCmd(confirm, msgs)
+				}
+			} else {
+				m, _ = pressForCmd(t, m, runeKey('x'))
+			}
+
+			sp.release <- struct{}{}
+
+			deadline := time.After(2 * time.Second)
+			for m.transportBusy {
+				select {
+				case msg := <-msgs:
+					next, follow := m.Update(msg)
+					m = next.(*Model)
+					if follow != nil {
+						runAsyncCmd(follow, msgs)
+					}
+				case <-deadline:
+					t.Fatal("transport did not stop")
+				}
+			}
+
+			played, _, stops := sp.snapshot()
+			if stops != 1 {
+				t.Errorf("Stop calls = %d, want 1", stops)
+			}
+			if len(played) != 1 {
+				t.Errorf("Play calls = %d, want only the initial one", len(played))
+			}
+			if m.status.State == player.StatePlaying {
+				t.Errorf("player still playing after %s", tc.name)
+			}
+			if tc.clear {
+				if got := len(m.queue.Snapshot().Items); got != 0 {
+					t.Errorf("queue length after clear = %d, want 0", got)
+				}
+			}
+		})
+	}
+}
+
+// concurrencyProber records the maximum number of simultaneous Probe calls.
+type concurrencyProber struct {
+	mu     sync.Mutex
+	active int
+	max    int
+	calls  int
+}
+
+func (p *concurrencyProber) Probe(context.Context, string) (meta.Info, error) {
+	p.mu.Lock()
+	p.active++
+	p.calls++
+	if p.active > p.max {
+		p.max = p.active
+	}
+	p.mu.Unlock()
+
+	time.Sleep(2 * time.Millisecond)
+
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+	return meta.Info{Title: "probed"}, nil
+}
+
+func (p *concurrencyProber) stats() (calls, max int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls, p.max
+}
+
+func TestProbeItemsBoundsConcurrency(t *testing.T) {
+	prober := &concurrencyProber{}
+	m, _ := newPlaylistModel(t, func(opts *Options) {
+		opts.Config.RestoreQueue = false
+		opts.Prober = prober
+	})
+	for i := 0; i < 20; i++ {
+		m.queue.Append(queue.Item{Path: fmt.Sprintf("/music/%02d.mp3", i)})
+	}
+
+	cmd := m.probeItems()
+	if cmd == nil {
+		t.Fatal("probeItems returned no command")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("probeItems returned %T, want BatchMsg", cmd())
+	}
+
+	var wg sync.WaitGroup
+	for _, sub := range batch {
+		wg.Add(1)
+		go func(c tea.Cmd) {
+			defer wg.Done()
+			_ = c()
+		}(sub)
+	}
+	wg.Wait()
+
+	calls, maxSeen := prober.stats()
+	if calls != 20 {
+		t.Errorf("probe calls = %d, want 20", calls)
+	}
+	if maxSeen > probeConcurrency {
+		t.Errorf("max concurrent probes = %d, want <= %d", maxSeen, probeConcurrency)
+	}
+	if maxSeen < 2 {
+		t.Errorf("max concurrent probes = %d, want the batch to overlap", maxSeen)
+	}
+}
+
+func TestRestorePendingBlocksSettingsSaves(t *testing.T) {
+	store := &blockingLoadStore{
+		snapshot: queue.Snapshot{
+			Items:   []queue.Item{{Path: "/music/kept.flac", Title: "Kept", Duration: time.Minute}},
+			Current: 0,
+		},
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+
+	result := make(chan tea.Msg, 1)
+	go func() { result <- m.restoreCmd()() }()
+	<-store.started
+
+	m, cmd := pressForCmd(t, m, runeKey('s'))
+	m = runCmd(t, m, cmd)
+	m, cmd = pressForCmd(t, m, runeKey('r'))
+	m = runCmd(t, m, cmd)
+
+	if !m.restorePending {
+		t.Fatal("shuffle/repeat cleared restorePending")
+	}
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("settings before restore saved %d empty queue(s)", got)
+	}
+
+	close(store.release)
+	next, follow := m.Update(<-result)
+	m = next.(*Model)
+	if follow != nil {
+		m = runCmd(t, m, follow)
+	}
+	if m.restorePending {
+		t.Error("successful restore left restorePending set")
+	}
+}
+
+func TestZeroItemBrowserAddDoesNotSave(t *testing.T) {
+	store := &fakeStore{}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+
+	next, cmd := m.Update(browserAddMsg{gen: m.browserGen, status: "added 0 item(s)"})
+	m = next.(*Model)
+	if cmd != nil {
+		t.Errorf("zero-item add returned a command %T", cmd)
+	}
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("zero-item add saved %d time(s)", got)
+	}
+	if !m.restorePending {
+		t.Error("zero-item add cleared restorePending")
+	}
+	if m.statusMsg != "added 0 item(s)" {
+		t.Errorf("status = %q, want the add summary", m.statusMsg)
+	}
+}
+
+func TestRealBrowserAddBeforeRestoreIsAuthoritative(t *testing.T) {
+	store := &blockingLoadStore{
+		snapshot: queue.Snapshot{
+			Items:   []queue.Item{{Path: "/music/restored.flac", Title: "Restored", Duration: time.Minute}},
+			Current: 0,
+		},
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+
+	result := make(chan tea.Msg, 1)
+	go func() { result <- m.restoreCmd()() }()
+	<-store.started
+
+	next, cmd := m.Update(browserAddMsg{
+		gen:    m.browserGen,
+		items:  []queue.Item{{Path: "/music/new.flac", Title: "New", Duration: time.Minute}},
+		status: "added 1 item(s)",
+	})
+	m = next.(*Model)
+	m = runCmd(t, m, cmd)
+	if m.restorePending {
+		t.Fatal("real item add did not clear restorePending")
+	}
+	if got := store.saveCount(); got == 0 {
+		t.Fatal("real item add did not save")
+	}
+	saved, ok := store.lastSaved()
+	if !ok || len(saved.Items) != 1 || saved.Items[0].Title != "New" {
+		t.Fatalf("saved snapshot = %#v, want the added item", saved)
+	}
+
+	close(store.release)
+	next, follow := m.Update(<-result)
+	m = next.(*Model)
+	if follow != nil {
+		m = runCmd(t, m, follow)
+	}
+	if got := m.queue.Snapshot().Items; len(got) != 1 || got[0].Title != "New" {
+		t.Errorf("late restore clobbered the user queue: %#v", got)
+	}
 }

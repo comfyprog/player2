@@ -457,6 +457,8 @@ func TestRemoteURLsRejected(t *testing.T) {
 		"https://example.com/a.wav",
 		"ftp://example.com/a.wav",
 		"s3://bucket/a.wav",
+		"file://remotehost/share/a.wav",
+		"file://example.com/a.wav",
 	} {
 		t.Run(remote, func(t *testing.T) {
 			dir := t.TempDir()

@@ -98,7 +98,10 @@ func Load(path string) ([]Entry, error) {
 			continue
 		}
 
-		local, err := resolveLocal(trimmed, baseDir)
+		// Only the comment/directive check trims whitespace. Path lines keep
+		// leading and trailing spaces because they are valid filename
+		// characters; only a trailing CR from CRLF input is removed.
+		local, err := resolveLocal(line, baseDir)
 		if err != nil {
 			return nil, fmt.Errorf("playlist: %s: %w", absPath, err)
 		}
@@ -167,6 +170,13 @@ func Write(path string, items []queue.Item) error {
 		pathRel, err := relativePath(dir, item.Path)
 		if err != nil {
 			return fmt.Errorf("playlist: path %q: %w", item.Path, err)
+		}
+		// A relative path that begins with '#' would reload as a comment, and
+		// leading/trailing spaces are significant in filenames. Prefixing ./
+		// keeps the line unambiguously a path. Absolute paths cannot be
+		// mistaken for comments, so they are written unchanged.
+		if !filepath.IsAbs(pathRel) && needsDotPrefix(pathRel) {
+			pathRel = "./" + pathRel
 		}
 		buf.WriteString(pathRel)
 		buf.WriteByte('\n')
@@ -322,6 +332,19 @@ func relativePath(base, target string) (string, error) {
 		return rel, nil
 	}
 	return abs, nil
+}
+
+// needsDotPrefix reports whether a relative playlist path needs a ./
+// prefix so it cannot reload as a directive and keeps leading/trailing
+// whitespace as part of the filename.
+func needsDotPrefix(path string) bool {
+	if strings.HasPrefix(path, "#") {
+		return true
+	}
+	if path != strings.TrimSpace(path) {
+		return true
+	}
+	return strings.HasPrefix(strings.TrimSpace(path), "#")
 }
 
 // displayName builds the EXTINF display string. The file basename is used when
