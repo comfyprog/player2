@@ -617,8 +617,36 @@ func (m *Model) saveQueue() tea.Cmd {
 	snapshot := m.queue.Snapshot()
 	store := m.store
 	return func() tea.Msg {
+		m.saveMu.Lock()
+		defer m.saveMu.Unlock()
+		if m.flushed {
+			// An exit-time flush has already persisted the newest snapshot;
+			// this older async save must not overwrite it.
+			return queueSavedMsg{}
+		}
 		return queueSavedMsg{err: store.Save(snapshot)}
 	}
+}
+
+// FlushQueue synchronously saves the latest queue snapshot. It shares saveMu
+// with the asynchronous save commands, so it waits for any save already in
+// flight and then writes the current state. Saves that have not started yet
+// are skipped afterwards, so an older in-flight snapshot can never overwrite
+// the exit-time save. A nil store is a no-op.
+func (m *Model) FlushQueue() error {
+	if m.store == nil {
+		return nil
+	}
+	snapshot := m.queue.Snapshot()
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	m.flushed = true
+	return m.store.Save(snapshot)
+}
+
+// QueueSnapshot returns a copy of the current queue state.
+func (m *Model) QueueSnapshot() queue.Snapshot {
+	return m.queue.Snapshot()
 }
 
 // applyQueueSaved finishes one save and starts the coalesced follow-up.

@@ -1,0 +1,257 @@
+# player2
+
+player2 is a filesystem-first music player for Linux terminals. It browses
+local directories in a MOC-like two-pane interface, builds a playback queue,
+handles CUE sheets as virtual album folders, and decodes anything FFmpeg can
+read. There is no library index, database, account, or network access: every
+view reads the filesystem and playback uses local files only.
+
+## Install and build
+
+Requirements:
+
+- Linux.
+- Go 1.26 or newer.
+- cgo enabled (`CGO_ENABLED=1`); the audio output backend uses miniaudio through
+  malgo. On Linux the build only needs `-ldl` in addition to the normal cgo
+  toolchain.
+- `ffmpeg` and `ffprobe` at runtime. They provide decoding and metadata.
+- A working audio server or device exposed through PulseAudio, PipeWire, ALSA,
+  or JACK.
+
+Build the binary:
+
+```sh
+make build            # writes bin/player2
+# or
+CGO_ENABLED=1 go build -o bin/player2 ./cmd/player2
+# or, for a binary named player2 in the current directory
+go build ./cmd/player2
+```
+
+Run it:
+
+```sh
+./bin/player2 [directory]
+```
+
+## Command line
+
+```text
+player2 [directory]
+player2 --config PATH
+player2 --debug
+player2 --version
+```
+
+- `--config PATH` reads exactly `PATH`; a missing explicit file is an error.
+  With no flag, player2 reads `$XDG_CONFIG_HOME/player2/config.toml`
+  (`~/.config/player2/config.toml` by default) if it exists, otherwise built-in
+  defaults are used.
+- `--debug` appends diagnostic logging to
+  `$XDG_STATE_HOME/player2/player2.log`
+  (`~/.local/state/player2/player2.log` by default). The directory is created
+  with mode `0700` and the file with mode `0600`. Debug output never goes to
+  stdout. Without `--debug`, logs are discarded.
+- `--version` prints `player2 <version>` and exits without reading
+  configuration or checking FFmpeg or audio devices.
+- Diagnostics always go to stderr. Unknown flags and extra positional
+  arguments are usage errors.
+
+The start directory is chosen in this order:
+
+1. The optional command-line directory. It must exist and be a directory.
+2. `start_dir` from the configuration. If it is missing or not a directory,
+   player2 logs a note (with `--debug`) and falls back to the current directory.
+3. The current working directory.
+
+Before opening the interface, player2 checks that the configured `ffmpeg_bin`
+and `ffprobe_bin` values are executable. An unusable binary is reported with an
+installation hint.
+
+## Keys
+
+All keys are configurable; these are the defaults.
+
+| Action | Keys | Description |
+| --- | --- | --- |
+| Quit | `q`, `Ctrl+C` | Exit player2 |
+| Help | `?` | Show the full key map |
+| Switch pane | `Tab` | Move between the browser and playlist |
+| Open/play | `Enter` | Open a directory/CUE folder or play the selection |
+| Parent directory | `Backspace` | Go up one directory |
+| Move up/down | `Up`/`k`, `Down`/`j` | Move the selection |
+| Page up/down | `PgUp`, `PgDn` | Move one screen |
+| First/last | `Home`, `End` | Jump to the first or last row |
+| Add | `a` | Add the selection to the queue |
+| Add all | `A` | Add the whole directory, recursively |
+| Remove | `d` | Remove the selected queue item |
+| Move item up/down | `K`, `J` | Reorder the selected queue item |
+| Play/pause | `Space` | Pause/resume, or start the current item |
+| Stop | `x` | Stop playback |
+| Next/previous | `n`, `b` | Move through the queue |
+| Seek back/forward | `Left`, `Right` | Seek by 5 seconds |
+| Volume up/down | `+`/`=`, `-`/`_` | Change volume by 5% |
+| Mute | `m` | Toggle mute |
+| Shuffle | `s` | Toggle shuffle |
+| Repeat | `r` | Cycle off, all, one |
+| Search | `/` | Filter the browser by substring |
+| Save playlist | `w` | Save the queue as an M3U file |
+| Rescan | `R` | Reload the current directory |
+| Clear queue | `c` | Clear the queue (with confirmation) |
+| Go to playing | `g` | Select the current queue item |
+
+## Configuration
+
+The default location is `~/.config/player2/config.toml` (respecting
+`XDG_CONFIG_HOME`). Every key is optional; omitted keys keep the defaults shown
+below.
+
+```toml
+start_dir = "~/Music"
+show_hidden = false
+follow_symlinks = false
+restore_queue = true
+volume = 70
+sample_rate = 48000
+buffer_seconds = 2
+
+ffmpeg_bin = "ffmpeg"
+ffprobe_bin = "ffprobe"
+cue_fallback_encoding = "windows-1252"
+extra_audio_extensions = []
+
+[colors]
+accent = "39"
+dir = "33"
+cue = "141"
+playing = "46"
+error = "196"
+
+[keys]
+# Values are arrays of key names understood by Bubble Tea, for example:
+quit = ["q", "ctrl+c"]
+volume_up = ["+", "="]
+```
+
+Notes:
+
+- `start_dir` supports a leading `~` and environment variables such as
+  `$HOME`.
+- `volume` is `0`–`100`; `sample_rate` and `buffer_seconds` must be positive.
+- `ffmpeg_bin` and `ffprobe_bin` may be names on `PATH` or explicit paths.
+- `cue_fallback_encoding` is used when a CUE sheet is neither UTF-8 nor UTF-16
+  with a byte-order mark. `windows-1252` is the default; `"utf-8"` (or
+  `"utf8"`) disables the legacy fallback, and the common ISO-8859/Windows/KOI8/Mac
+  encodings are accepted.
+- `extra_audio_extensions` adds extensions (for example `[".m4b"]`) that the
+  scanner should treat as audio. Files are still decoded by FFmpeg.
+- `[colors]` values are ANSI 256-color indexes.
+- `[keys]` action names are the lowercase names shown in the key table; each
+  value replaces that action's default binding.
+
+Unknown configuration keys and unknown `[keys]` action names are startup errors
+rather than silently ignored.
+
+## Playlists
+
+player2 reads and writes `.m3u` and `.m3u8` playlists. Paths are local; relative
+paths are resolved against the playlist's directory. Remote URLs and remote
+`file://` hosts are rejected.
+
+A playlist entry can point at one track inside a CUE sheet. Put the CUE
+reference on the line before the audio file it belongs to:
+
+```m3u
+#EXTM3U
+#EXTINF:185,Artist - Third Movement
+#EXT-X-PLAYER2-CUE:cue=Album.cue;track=3
+Album.flac
+```
+
+The `cue=` value is a path relative to the playlist (URL-escaped when needed)
+and `track=` is the CUE `TRACK` number. The following path line identifies the
+whole audio file. If the CUE or track cannot be resolved, playback falls back to
+the whole-file entry. Saving with `w` writes this extension automatically for
+CUE track queue items.
+
+## CUE sheets
+
+A CUE sheet that parses, references existing regular audio files, and has valid
+track boundaries appears in the browser as a virtual folder named after the
+sheet, for example `Album.cue/`. The audio files referenced by that valid sheet
+are hidden from the surrounding directory listing so the album is not shown
+twice.
+
+Opening the folder lists one entry per track with its title, performer, album,
+start offset, and duration. Entering a track queues it and starts playback at
+the correct offset; seeking stays within the track.
+
+An invalid CUE (parse error, missing `FILE`, missing audio, bad `INDEX`, or a
+track ending before it starts) is shown as an error entry and hides nothing, so
+the underlying audio files remain visible and playable.
+
+Boundary rules:
+
+- `INDEX 01` is the track start.
+- An `INDEX 00` pregap belongs to the previous track.
+- The last track of a file ends at the audio file's duration.
+- Multi-file sheets are supported; each `FILE` has its own track ranges.
+- Backslash separators, case-insensitive file names, UTF-16 byte-order marks,
+  and the configured fallback encoding are handled.
+
+## Supported formats
+
+Any format FFmpeg can decode works through the FFmpeg backend. The built-in
+extension list is:
+
+```text
+.aac .ac3 .aif .aifc .aiff .alac .ape .caf .dff .dsf .dts .flac .m4a .m4b
+.mka .mp2 .mp3 .mpc .oga .ogg .opus .spx .tta .w64 .wav .wma .wv
+```
+
+Add more extensions with `extra_audio_extensions`; decoding is always delegated
+to FFmpeg, so the installed FFmpeg build must include the relevant codec.
+
+## Local files only
+
+player2 never makes network requests. FFmpeg is always invoked with
+`-protocol_whitelist file`, and CUE/M3U loaders reject remote URL schemes and
+remote `file://` hosts. Only local files are scanned, queued, probed, or played.
+
+## Limitations
+
+- FFmpeg is started per item, so short gaps between tracks are expected.
+- Playback is not gapless across queue items or between same-file CUE tracks.
+- There is no library index, tag database, lyrics, cover-art rendering, MPRIS
+  integration, or mouse support.
+- Linux only. Audio output uses malgo/miniaudio; there is no fallback to a
+  headless or file output device.
+- The queue is persisted as JSON under the state directory; it is not a
+  portable library format.
+
+## Verification checklist
+
+The end-to-end test generates real media with FFmpeg (FLAC, MP3, Opus, ALAC in
+M4A, plus a CUE album) and plays a CUE track through a fake sink, so it needs no
+audio device:
+
+```sh
+make test
+make race
+make test-integration
+```
+
+Manual checks, when a real terminal and audio device are available:
+
+- Play an APE, ALAC, and Opus file.
+- Open a single-file FLAC/APE album with a `.cue` sheet and play each track.
+- Pause, seek backward/forward, and confirm the position stays within the track.
+- Save the queue with `w`, load the `.m3u` from the browser, and confirm entries.
+- Restart with `restore_queue = true` and confirm the queue returns.
+- Resize the terminal and confirm the layout stays usable.
+- Open a malformed CUE and confirm it is displayed as an error while the audio
+  file remains visible.
+- Rename a referenced audio file and confirm the CUE becomes invalid instead of
+  hiding the remaining file.
+- Quit and confirm no `ffmpeg` process is left running.

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -107,9 +108,13 @@ type Model struct {
 	lastVolume int
 
 	// Queue persistence is single-flight; saveDirty records a mutation that
-	// arrived while a save was in flight.
+	// arrived while a save was in flight. saveMu serializes store writes so an
+	// exit-time FlushQueue cannot be overtaken by an older async save; flushed
+	// makes saves that have not started yet skip after the exit flush.
 	saving    bool
 	saveDirty bool
+	saveMu    sync.Mutex
+	flushed   bool
 
 	// probing tracks metadata probes currently in flight, keyed by item ID;
 	// the value is the probed path so reused IDs cannot be mistaken.

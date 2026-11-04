@@ -66,6 +66,121 @@ func playlistPlain(m *Model) string {
 	return ansi.Strip(strings.Join(m.playlistLines(40, 6), "\n"))
 }
 
+func TestFlushQueueSavesLatestSnapshot(t *testing.T) {
+	m := newTestModel(t, nil)
+	store := m.store.(*fakeStore)
+	m.queue.Append(playlistItem("One", "Artist", 1, time.Minute))
+	m.queue.SetCurrent(0)
+
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+
+	saved, ok := store.lastSaved()
+	if !ok {
+		t.Fatal("FlushQueue did not save")
+	}
+	if got := len(saved.Items); got != 1 {
+		t.Fatalf("saved %d items, want 1", got)
+	}
+	if saved.Items[0].Title != "One" {
+		t.Errorf("saved title = %q, want One", saved.Items[0].Title)
+	}
+	if got := m.QueueSnapshot(); len(got.Items) != 1 || got.Current != 0 {
+		t.Errorf("QueueSnapshot() = %+v, want one current item", got)
+	}
+}
+
+func TestFlushQueueReturnsSaveError(t *testing.T) {
+	want := errors.New("disk full")
+	m := newTestModel(t, func(opts *Options) {
+		opts.Store = &fakeStore{saveErr: want}
+	})
+
+	if err := m.FlushQueue(); !errors.Is(err, want) {
+		t.Fatalf("FlushQueue() error = %v, want %v", err, want)
+	}
+}
+
+// TestFlushQueueCannotBeOvertakenByOlderSave uses the blockingStore below to
+// prove that FlushQueue waits for an older asynchronous save.
+func TestFlushQueueCannotBeOvertakenByOlderSave(t *testing.T) {
+	store := &blockingStore{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	m := newTestModel(t, func(opts *Options) { opts.Store = store })
+	m.queue.Append(playlistItem("Old", "", 0, time.Minute))
+
+	// Simulate an asynchronous save of the one-item queue that is still in
+	// flight when the program exits.
+	cmd := m.saveQueue()
+	if cmd == nil {
+		t.Fatal("saveQueue returned nil")
+	}
+	saveDone := make(chan struct{})
+	go func() {
+		cmd()
+		close(saveDone)
+	}()
+	<-store.started
+
+	m.queue.Append(playlistItem("New", "", 0, time.Minute))
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- m.FlushQueue() }()
+	close(store.release)
+
+	if err := <-flushDone; err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+	<-saveDone
+
+	saved := store.snapshots()
+	if len(saved) == 0 {
+		t.Fatal("no save recorded")
+	}
+	last := saved[len(saved)-1]
+	if got := len(last.Items); got != 2 {
+		t.Fatalf("last saved %d items, want the flushed 2-item snapshot", got)
+	}
+	if last.Items[1].Title != "New" {
+		t.Errorf("last saved title = %q, want New", last.Items[1].Title)
+	}
+}
+
+func TestFlushQueueSuppressesLateOlderSave(t *testing.T) {
+	store := &fakeStore{}
+	m := newTestModel(t, func(opts *Options) { opts.Store = store })
+	m.queue.Append(playlistItem("Old", "", 0, time.Minute))
+
+	// Schedule a save but do not start it; it is still "in flight" from the
+	// program's perspective when exit begins.
+	pending := m.saveQueue()
+	if pending == nil {
+		t.Fatal("saveQueue returned nil")
+	}
+
+	m.queue.Append(playlistItem("New", "", 0, time.Minute))
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+	pending()
+
+	saved, ok := store.lastSaved()
+	if !ok {
+		t.Fatal("no save recorded")
+	}
+	if got := len(saved.Items); got != 2 {
+		t.Fatalf("last saved %d items, want the flushed 2-item snapshot", got)
+	}
+	if saved.Items[1].Title != "New" {
+		t.Errorf("last saved title = %q, want New", saved.Items[1].Title)
+	}
+	if store.saveCount() != 1 {
+		t.Errorf("save count = %d, want 1 (the late save should be skipped)", store.saveCount())
+	}
+}
+
 func TestPlaylistRenderMarkerSelectionDurationsAndCUE(t *testing.T) {
 	m, _ := newPlaylistModel(t, nil)
 	m.queue.Append(
