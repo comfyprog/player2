@@ -1,0 +1,12 @@
+# Build output
+/bin/
+/player2
+
+# Test binaries, profiling and coverage output
+*.test
+*.out
+*.prof
+coverage.*
+
+# Logs
+*.log
