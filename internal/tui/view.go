@@ -74,9 +74,12 @@ func (m *Model) bodyLines(height int) []string {
 	return lines
 }
 
-// paneLines renders a pane title and blank placeholder rows. Tasks 11 and 12
-// replace the blank rows with real content.
+// paneLines renders one pane's title and content.
 func (m *Model) paneLines(pane Pane, width, height int) []string {
+	if pane == PaneBrowser {
+		return m.browserLines(width, height)
+	}
+
 	lines := make([]string, height)
 	if height == 0 {
 		return lines
@@ -101,12 +104,7 @@ func (m *Model) paneTitle(pane Pane, width int) string {
 	case PanePlaylist:
 		return truncatePlain(fmt.Sprintf("Playlist (%d)", len(m.queue.Snapshot().Items)), width)
 	default:
-		const prefix = "Files: "
-		available := width - len(prefix)
-		if available <= 0 {
-			return truncatePlain(prefix, width)
-		}
-		return prefix + truncateLeft(abbreviateHome(m.browserPath), available)
+		return m.browserTitle(width)
 	}
 }
 
@@ -195,8 +193,13 @@ func (m *Model) statusLine() string {
 	rightPlain, rightStyled := m.progress()
 	rightWidth := ansi.StringWidth(rightPlain)
 
+	leftStyle := m.styles.Status
+	if m.statusIsError {
+		leftStyle = m.styles.Error
+	}
+
 	if rightWidth >= m.width {
-		return m.styles.Status.Render(fitPlain(left, m.width))
+		return leftStyle.Render(fitPlain(left, m.width))
 	}
 
 	leftWidth := m.width - rightWidth - 1
@@ -209,7 +212,7 @@ func (m *Model) statusLine() string {
 	if gap < 0 {
 		gap = 0
 	}
-	return m.styles.Status.Render(left) + strings.Repeat(" ", gap) + rightStyled
+	return leftStyle.Render(left) + strings.Repeat(" ", gap) + rightStyled
 }
 
 // progress returns the plain and styled progress indicator. The fill is zero

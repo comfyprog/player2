@@ -39,11 +39,11 @@ const (
 )
 
 // browserLocation is a saved browser position used by the navigation stack.
-// Task 11 fills in traversal; the shape lives here so the model is stable.
 type browserLocation struct {
 	Path     string
 	Selected int
 	Offset   int
+	Cue      bool
 }
 
 // Model is the Bubble Tea model for the player2 shell.
@@ -75,21 +75,25 @@ type Model struct {
 
 	// status caches the last player snapshot so rendering never calls into
 	// the engine. statusMsg is a transient user-facing message.
-	status       player.Status
-	statusMsg    string
-	statusExpiry time.Time
+	status        player.Status
+	statusMsg     string
+	statusExpiry  time.Time
+	statusIsError bool
 
 	// Browser pane state. Tasks 11 and 13 extend behavior; the fields are
 	// intentionally kept here so the shell and later panes share one model.
-	browserPath     string
-	browserEntries  []library.Entry
-	browserSelected int
-	browserOffset   int
-	browserStack    []browserLocation
-	browserSearch   string
-	browserFilter   string
-	browserLoading  bool
-	browserGen      uint64
+	browserPath        string
+	browserEntries     []library.Entry
+	browserEntriesPath string
+	browserSelected    int
+	browserOffset      int
+	browserStack       []browserLocation
+	browserSearch      string
+	browserFilter      string
+	browserSearching   bool
+	browserLoading     bool
+	browserCue         bool
+	browserGen         uint64
 
 	// Playlist pane state.
 	playlistSelected int
@@ -153,8 +157,14 @@ func (m *Model) StartDir() string { return m.startDir }
 // Err returns the startup validation error, if any.
 func (m *Model) Err() error { return m.startupErr }
 
-// Init starts the periodic status tick.
-func (m *Model) Init() tea.Cmd { return m.tick() }
+// Init starts the periodic status tick and the initial browser load.
+func (m *Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.tick()}
+	if m.scanner != nil {
+		cmds = append(cmds, m.loadBrowser(m.browserPath, m.browserCue, 0, 0, ""))
+	}
+	return tea.Batch(cmds...)
+}
 
 // tick schedules the next status refresh.
 func (m *Model) tick() tea.Cmd {
@@ -169,6 +179,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clampBrowser()
 		if m.help {
 			m.clampHelpOffset()
 		}
@@ -177,6 +188,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.refresh()
 		return m, m.tick()
+
+	case browserLoadedMsg:
+		m.applyBrowserLoaded(msg)
+		return m, nil
+
+	case browserPlayMsg:
+		m.applyBrowserPlay(msg)
+		return m, nil
+
+	case browserAddMsg:
+		m.applyBrowserAdd(msg)
+		return m, nil
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -192,6 +215,7 @@ func (m *Model) refresh() {
 	if !m.statusExpiry.IsZero() && !m.currentTime().Before(m.statusExpiry) {
 		m.statusMsg = ""
 		m.statusExpiry = time.Time{}
+		m.statusIsError = false
 	}
 }
 
@@ -209,6 +233,7 @@ func (m *Model) currentTime() time.Time {
 // the next tick clears it (used by tests).
 func (m *Model) setStatus(message string, timeout time.Duration) {
 	m.statusMsg = message
+	m.statusIsError = false
 	if timeout == 0 {
 		m.statusExpiry = time.Time{}
 		return
@@ -216,8 +241,19 @@ func (m *Model) setStatus(message string, timeout time.Duration) {
 	m.statusExpiry = m.currentTime().Add(timeout)
 }
 
-// handleKey dispatches global actions. Pane-specific actions are intentionally
-// left unhandled for Tasks 11 and 12.
+// setStatusError shows a persistent error in the status line.
+func (m *Model) setStatusError(message string) {
+	m.setStatus(message, 0)
+	m.statusIsError = true
+}
+
+// setStatusOK shows a persistent normal status message.
+func (m *Model) setStatusOK(message string) {
+	m.setStatus(message, 0)
+	m.statusIsError = false
+}
+
+// handleKey dispatches global and pane-specific actions.
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
@@ -225,6 +261,15 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// is open and only supports closing, quitting, and scrolling.
 	if m.help {
 		return m.handleHelpKey(key)
+	}
+
+	// Ctrl+C remains an escape hatch while the browser filter captures
+	// printable keys.
+	if m.browserSearching && m.focus == PaneBrowser && key == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if m.browserSearching && m.focus == PaneBrowser {
+		return m.handleBrowserSearchKey(msg)
 	}
 
 	action, ok := m.keys.Action(key)
@@ -238,12 +283,18 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case ActionHelp:
 		m.help = true
 		m.helpOffset = 0
+		return m, nil
 	case ActionSwitchPane:
 		if m.focus == PaneBrowser {
 			m.focus = PanePlaylist
 		} else {
 			m.focus = PaneBrowser
 		}
+		return m, nil
+	}
+
+	if m.focus == PaneBrowser {
+		return m, m.handleBrowserAction(action)
 	}
 	return m, nil
 }
