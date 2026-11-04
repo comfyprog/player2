@@ -1,0 +1,19 @@
+{
+  "streams": [
+    {
+      "codec_name": "flac",
+      "codec_type": "audio",
+      "sample_rate": "not-a-number",
+      "channels": 0,
+      "duration": "N/A"
+    }
+  ],
+  "format": {
+    "duration": "NaN",
+    "tags": {
+      "track": "abc/12",
+      "title": "Bad Tags",
+      "artist": 42
+    }
+  }
+}

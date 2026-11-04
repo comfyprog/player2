@@ -1,0 +1,23 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "flac",
+      "codec_type": "audio",
+      "sample_rate": "44100",
+      "channels": 2,
+      "duration": "12.300000"
+    }
+  ],
+  "format": {
+    "duration": "12.345000",
+    "tags": {
+      "TITLE": "Song Title",
+      "Artist": "The Artist",
+      "ALBUM": "The Album",
+      "Album_Artist": "Album Artist",
+      "TRACK": "3/12",
+      "UNKNOWN_TAG": "ignored"
+    }
+  }
+}
