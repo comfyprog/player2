@@ -603,13 +603,14 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 	}
 
 	// A replacement queue starts with fresh item IDs.
-	m.probing = make(map[uint64]bool)
+	m.probing = make(map[uint64]string)
 	m.queue.Replace(msg.items...)
 	selected := msg.selected
 	if selected < 0 || selected >= len(msg.items) {
 		selected = 0
 	}
 	m.queue.SetCurrent(selected)
+	m.bumpQueueEpoch()
 	m.playlistSelected = selected
 	m.clampPlaylist()
 
@@ -663,6 +664,7 @@ func (m *Model) applyBrowserAdd(msg browserAddMsg) tea.Cmd {
 	}
 	if len(msg.items) > 0 {
 		m.queue.Append(msg.items...)
+		m.bumpQueueEpoch()
 		m.clampPlaylist()
 	}
 	m.setStatusOK(msg.status)

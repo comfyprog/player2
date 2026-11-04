@@ -107,8 +107,13 @@ type Model struct {
 	saving    bool
 	saveDirty bool
 
-	// probing tracks metadata probes currently in flight, keyed by item ID.
-	probing map[uint64]bool
+	// probing tracks metadata probes currently in flight, keyed by item ID;
+	// the value is the probed path so reused IDs cannot be mistaken.
+	probing map[uint64]string
+
+	// queueEpoch increments on every user/browser queue mutation. A restore
+	// started earlier is dropped if the queue changed while it was loading.
+	queueEpoch uint64
 }
 
 // tickMsg is delivered by the periodic status refresh.
@@ -137,7 +142,7 @@ func New(opts Options) *Model {
 		lastVolume: cfg.Volume,
 		statusMsg:  "ready",
 		styles:     NewStyles(cfg.Colors),
-		probing:    make(map[uint64]bool),
+		probing:    make(map[uint64]string),
 	}
 
 	keys, err := NewKeyMap(cfg)

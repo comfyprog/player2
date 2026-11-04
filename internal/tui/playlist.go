@@ -36,11 +36,14 @@ type seekResultMsg struct {
 	err   error
 }
 
-// queueRestoredMsg is the result of loading a saved queue.
+// queueRestoredMsg is the result of loading a saved queue. epoch records the
+// queue generation when the load started so a late result cannot overwrite a
+// queue changed in the meantime.
 type queueRestoredMsg struct {
 	snapshot queue.Snapshot
 	skipped  int
 	err      error
+	epoch    uint64
 }
 
 // queueSavedMsg is the result of an asynchronous queue save.
@@ -369,6 +372,7 @@ func (m *Model) actionNext() tea.Cmd {
 		m.setStatusOK("end of queue")
 		return nil
 	}
+	m.bumpQueueEpoch()
 	m.followSelection(previous, selected, hadPrevious, hadSelected)
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
@@ -383,6 +387,7 @@ func (m *Model) actionPrevious() tea.Cmd {
 		m.setStatusOK("start of queue")
 		return nil
 	}
+	m.bumpQueueEpoch()
 	m.followSelection(previous, selected, hadPrevious, hadSelected)
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
@@ -444,6 +449,7 @@ func (m *Model) toggleMute() {
 func (m *Model) toggleShuffle() tea.Cmd {
 	enabled := !m.queue.Snapshot().Shuffle
 	m.queue.SetShuffle(enabled)
+	m.bumpQueueEpoch()
 	if enabled {
 		m.setStatusOK("shuffle on")
 	} else {
@@ -455,6 +461,7 @@ func (m *Model) toggleShuffle() tea.Cmd {
 // cycleRepeat advances the repeat mode and persists the queue.
 func (m *Model) cycleRepeat() tea.Cmd {
 	mode := m.queue.CycleRepeat()
+	m.bumpQueueEpoch()
 	switch mode {
 	case queue.RepeatAll:
 		m.setStatusOK("repeat all")
@@ -500,10 +507,12 @@ func (m *Model) handlePlaylistAction(action Action) tea.Cmd {
 
 // playlistOpen makes the selected item current and plays it.
 func (m *Model) playlistOpen() tea.Cmd {
+	m.clampPlaylist()
 	if !m.queue.SetCurrent(m.playlistSelected) {
 		m.setStatusOK("nothing to play")
 		return nil
 	}
+	m.bumpQueueEpoch()
 	m.clampPlaylist()
 	item, ok := m.queue.Current()
 	if !ok {
@@ -516,11 +525,14 @@ func (m *Model) playlistOpen() tea.Cmd {
 // playlistRemove removes the selected item. Removing the current item stops
 // playback; the queue selects the next (or previous) item.
 func (m *Model) playlistRemove() tea.Cmd {
+	m.clampPlaylist()
 	previous, hadPrevious := m.queue.Current()
 	removed, ok := m.queue.Remove(m.playlistSelected)
 	if !ok {
+		m.setStatusOK("nothing to remove")
 		return nil
 	}
+	m.bumpQueueEpoch()
 	if hadPrevious && removed.ID == previous.ID {
 		if m.player != nil {
 			m.player.Stop()
@@ -538,6 +550,7 @@ func (m *Model) playlistMove(direction int) tea.Cmd {
 		m.clampPlaylist()
 		return nil
 	}
+	m.bumpQueueEpoch()
 	m.playlistSelected += direction
 	m.clampPlaylist()
 	return m.saveQueue()
@@ -547,15 +560,22 @@ func (m *Model) playlistMove(direction int) tea.Cmd {
 // confirmation prompt.
 func (m *Model) playlistClear() tea.Cmd {
 	m.queue.Clear()
+	m.bumpQueueEpoch()
 	if m.player != nil {
 		m.player.Stop()
 		m.refresh()
 	}
 	m.playlistSelected = 0
 	m.playlistOffset = 0
-	m.probing = make(map[uint64]bool)
+	m.probing = make(map[uint64]string)
 	m.setStatusOK("queue cleared")
 	return m.saveQueue()
+}
+
+// bumpQueueEpoch records a user/browser queue mutation so a late restore is
+// ignored instead of clobbering the newer queue.
+func (m *Model) bumpQueueEpoch() {
+	m.queueEpoch++
 }
 
 // applyTransportPlayResult applies the outcome of an asynchronous Play call.
@@ -614,8 +634,8 @@ func (m *Model) applyQueueSaved(msg queueSavedMsg) tea.Cmd {
 	return nil
 }
 
-// afterQueueChange schedules metadata probes and a debounced save after the
-// queue contents changed.
+// afterQueueChange schedules metadata probes and a coalesced, single-flight
+// save after the queue contents changed.
 func (m *Model) afterQueueChange() tea.Cmd {
 	return tea.Batch(m.probeItems(), m.saveQueue())
 }
@@ -649,15 +669,15 @@ func (m *Model) probeItems() tea.Cmd {
 		return nil
 	}
 	if m.probing == nil {
-		m.probing = make(map[uint64]bool)
+		m.probing = make(map[uint64]string)
 	}
 
 	var cmds []tea.Cmd
 	for _, item := range m.queue.Snapshot().Items {
-		if m.probing[item.ID] || !m.needsProbe(item) {
+		if _, inFlight := m.probing[item.ID]; inFlight || !m.needsProbe(item) {
 			continue
 		}
-		m.probing[item.ID] = true
+		m.probing[item.ID] = item.Path
 		id, path, prober := item.ID, item.Path, m.prober
 		cmds = append(cmds, func() tea.Msg {
 			info, err := prober.Probe(context.Background(), path)
@@ -668,20 +688,20 @@ func (m *Model) probeItems() tea.Cmd {
 }
 
 // applyQueueMetadata applies non-zero probed fields to the item with the given
-// ID. Results for removed items are ignored.
+// ID. Results for removed, replaced, reused, or CUE items are ignored.
 func (m *Model) applyQueueMetadata(msg queueMetadataMsg) tea.Cmd {
-	if m.probing != nil {
+	// Clear the in-flight marker only when it still belongs to this probe;
+	// Restore can reuse an ID for a different item.
+	if path, ok := m.probing[msg.id]; ok && path == msg.path {
 		delete(m.probing, msg.id)
 	}
 	if msg.err != nil {
 		return nil
 	}
 
-	// IDs can be reused after Restore; only apply a result to the item that
-	// was actually probed.
 	found := false
 	for _, item := range m.queue.Snapshot().Items {
-		if item.ID == msg.id && item.Path == msg.path {
+		if item.ID == msg.id && item.Path == msg.path && item.CuePath == "" {
 			found = true
 			break
 		}
@@ -720,21 +740,27 @@ func (m *Model) applyQueueMetadata(msg queueMetadataMsg) tea.Cmd {
 	return m.saveQueue()
 }
 
-// restoreCmd loads the persisted queue asynchronously.
+// restoreCmd loads the persisted queue asynchronously. The captured epoch lets
+// the result be dropped when the user changed the queue while it was loading.
 func (m *Model) restoreCmd() tea.Cmd {
 	if m.store == nil {
 		return nil
 	}
 	store := m.store
+	epoch := m.queueEpoch
 	return func() tea.Msg {
 		snapshot, skipped, err := store.Load()
-		return queueRestoredMsg{snapshot: snapshot, skipped: skipped, err: err}
+		return queueRestoredMsg{snapshot: snapshot, skipped: skipped, err: err, epoch: epoch}
 	}
 }
 
 // applyQueueRestored installs a loaded queue, selects its current item, and
 // schedules probes and a save when items were pruned.
 func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
+	if msg.epoch != m.queueEpoch {
+		m.setStatusOK("queue changed; restore skipped")
+		return nil
+	}
 	if msg.err != nil {
 		m.setStatusError("restore: " + msg.err.Error())
 		return nil
@@ -744,7 +770,7 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 		return nil
 	}
 
-	m.probing = make(map[uint64]bool)
+	m.probing = make(map[uint64]string)
 	m.selectCurrent()
 
 	status := fmt.Sprintf("restored %d item(s)", len(msg.snapshot.Items))
@@ -795,6 +821,7 @@ func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 			m.setStatusOK("end of queue")
 			return nil
 		}
+		m.bumpQueueEpoch()
 		m.followSelection(previous, selected, hadPrevious, hadSelected)
 		return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 

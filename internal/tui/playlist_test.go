@@ -710,8 +710,8 @@ func TestMetadataProbeSkipsCUEAndDuplicates(t *testing.T) {
 		if cmd := m.probeItems(); cmd != nil {
 			t.Fatal("second probeItems scheduled a duplicate probe")
 		}
-		if !m.probing[id] {
-			t.Error("in-flight probe ID not tracked")
+		if path, ok := m.probing[id]; !ok || path != "/music/song.mp3" {
+			t.Errorf("in-flight probe = %q (ok=%v), want the item path", path, ok)
 		}
 	})
 }
@@ -843,6 +843,189 @@ func TestSaveErrorSetsStatus(t *testing.T) {
 	m = runCmd(t, m, m.saveQueue())
 	if !m.statusIsError || !strings.Contains(m.statusMsg, "disk full") {
 		t.Errorf("status = %q (error=%v), want save error", m.statusMsg, m.statusIsError)
+	}
+}
+
+func TestStaleProbeResultsIgnored(t *testing.T) {
+	t.Run("reused ID with a different path", func(t *testing.T) {
+		m, _ := newPlaylistModel(t, nil)
+		m.queue.Append(queue.Item{Path: "/music/new.mp3", Title: "New", Duration: time.Minute})
+		id := m.queue.Snapshot().Items[0].ID
+		m.probing = map[uint64]string{id: "/music/new.mp3"}
+
+		cmd := m.applyQueueMetadata(queueMetadataMsg{
+			id:   id,
+			path: "/music/old.mp3",
+			info: meta.Info{Title: "Stale", Duration: 9 * time.Minute},
+		})
+		if cmd != nil {
+			t.Error("stale probe result scheduled a save")
+		}
+		if got := m.queue.Snapshot().Items[0].Title; got != "New" {
+			t.Errorf("stale probe changed the reused item to %q", got)
+		}
+		if path, ok := m.probing[id]; !ok || path != "/music/new.mp3" {
+			t.Errorf("in-flight marker = %q (ok=%v), want the new path", path, ok)
+		}
+	})
+
+	t.Run("CUE item with the same path", func(t *testing.T) {
+		m, _ := newPlaylistModel(t, nil)
+		m.queue.Append(queue.Item{
+			Path:     "/music/song.flac",
+			CuePath:  "/music/song.cue",
+			CueTrack: 1,
+			Title:    "Track",
+			Duration: time.Minute,
+		})
+		id := m.queue.Snapshot().Items[0].ID
+		m.probing = map[uint64]string{id: "/music/song.flac"}
+
+		cmd := m.applyQueueMetadata(queueMetadataMsg{
+			id:   id,
+			path: "/music/song.flac",
+			info: meta.Info{Title: "Whole File", Duration: 9 * time.Minute},
+		})
+		if cmd != nil {
+			t.Error("CUE probe result scheduled a save")
+		}
+		if got := m.queue.Snapshot().Items[0].Title; got != "Track" {
+			t.Errorf("CUE item title = %q, want Track", got)
+		}
+	})
+}
+
+func TestStalePlaylistSelectionIsClamped(t *testing.T) {
+	t.Run("open clamps to the last item", func(t *testing.T) {
+		m, fp := newPlaylistModel(t, nil)
+		m.queue.Append(
+			playlistItem("One", "", 1, time.Minute),
+			playlistItem("Two", "", 2, time.Minute),
+		)
+		m.playlistSelected = 99
+
+		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m = runCmd(t, m, cmd)
+		if got := m.queue.Snapshot().Current; got != 1 {
+			t.Errorf("current = %d, want the clamped last item", got)
+		}
+		if len(fp.played) != 1 || fp.played[0].Title != "Two" {
+			t.Errorf("played = %#v, want Two", fp.played)
+		}
+	})
+
+	t.Run("remove clamps and then reports an empty queue", func(t *testing.T) {
+		m, _ := newPlaylistModel(t, nil)
+		m.queue.Append(playlistItem("One", "", 1, time.Minute))
+		m.playlistSelected = 99
+
+		m, cmd := pressForCmd(t, m, runeKey('d'))
+		m = runCmd(t, m, cmd)
+		if got := len(m.queue.Snapshot().Items); got != 0 {
+			t.Errorf("queue length = %d, want 0", got)
+		}
+
+		m.playlistSelected = 99
+		m = press(t, m, runeKey('d'))
+		if got := m.statusMsg; got != "nothing to remove" {
+			t.Errorf("statusMsg = %q, want nothing to remove", got)
+		}
+	})
+}
+
+// blockingLoadStore delays Load so a test can mutate the queue before the
+// startup restore result is delivered.
+type blockingLoadStore struct {
+	mu       sync.Mutex
+	snapshot queue.Snapshot
+	skipped  int
+	started  chan struct{}
+	release  chan struct{}
+	saved    []queue.Snapshot
+}
+
+func (s *blockingLoadStore) Load() (queue.Snapshot, int, error) {
+	s.started <- struct{}{}
+	<-s.release
+	return s.snapshot, s.skipped, nil
+}
+
+func (s *blockingLoadStore) Save(snapshot queue.Snapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saved = append(s.saved, snapshot)
+	return nil
+}
+
+func (s *blockingLoadStore) saveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.saved)
+}
+
+func (s *blockingLoadStore) lastSaved() (queue.Snapshot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.saved) == 0 {
+		return queue.Snapshot{}, false
+	}
+	return s.saved[len(s.saved)-1], true
+}
+
+func TestLateRestoreDoesNotClobberUserQueue(t *testing.T) {
+	store := &blockingLoadStore{
+		snapshot: queue.Snapshot{
+			Items: []queue.Item{
+				{Path: "/music/restored.flac", Title: "Restored", Duration: time.Minute},
+			},
+			Current: 0,
+		},
+		skipped: 2,
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+
+	loadCmd := m.restoreCmd()
+	result := make(chan tea.Msg, 1)
+	go func() { result <- loadCmd() }()
+	<-store.started
+
+	// The user adds a track while the restore is still loading.
+	next, cmd := m.Update(browserAddMsg{
+		gen:    m.browserGen,
+		items:  []queue.Item{{Path: "/music/new.flac", Title: "New", Duration: time.Minute}},
+		status: "added 1 item(s)",
+	})
+	m = next.(*Model)
+	m = runCmd(t, m, cmd)
+
+	close(store.release)
+	next, follow := m.Update(<-result)
+	m = next.(*Model)
+	if follow != nil {
+		t.Error("late restore scheduled queue work")
+	}
+
+	snapshot := m.queue.Snapshot()
+	if len(snapshot.Items) != 1 || snapshot.Items[0].Title != "New" {
+		t.Fatalf("late restore clobbered the queue: %#v", snapshot.Items)
+	}
+	if snapshot.Current != 0 || m.playlistSelected != 0 {
+		t.Errorf("current/selection = %d/%d, want 0/0", snapshot.Current, m.playlistSelected)
+	}
+	if got := store.saveCount(); got != 1 {
+		t.Errorf("saves = %d, want only the user mutation save", got)
+	}
+	saved, ok := store.lastSaved()
+	if !ok {
+		t.Fatal("user mutation was not saved")
+	}
+	if len(saved.Items) != 1 || saved.Items[0].Title != "New" {
+		t.Errorf("persisted snapshot = %#v, want the newer queue", saved.Items)
+	}
+	if !strings.Contains(m.statusMsg, "restore skipped") {
+		t.Errorf("statusMsg = %q, want restore skipped", m.statusMsg)
 	}
 }
 

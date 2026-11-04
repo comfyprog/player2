@@ -81,24 +81,9 @@ func (m *Model) paneLines(pane Pane, width, height int) []string {
 		return m.browserLines(width, height)
 	case PanePlaylist:
 		return m.playlistLines(width, height)
+	default:
+		return nil
 	}
-
-	lines := make([]string, height)
-	if height == 0 {
-		return lines
-	}
-
-	titleStyle := m.styles.Dim
-	if m.focus == pane {
-		titleStyle = m.styles.PaneFocus
-	}
-	lines[0] = titleStyle.Render(fitPlain(m.paneTitle(pane, width), width))
-
-	blank := strings.Repeat(" ", max(width, 0))
-	for i := 1; i < height; i++ {
-		lines[i] = blank
-	}
-	return lines
 }
 
 // paneTitle returns the plain title for a pane, fitted to width.
