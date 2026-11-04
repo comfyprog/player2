@@ -192,6 +192,7 @@ type stream struct {
 
 	mu     sync.Mutex
 	closed bool
+	reaped bool
 	eof    bool
 }
 
@@ -239,11 +240,12 @@ func (s *stream) Close() error {
 		return nil
 	}
 	s.closed = true
+	reaped := s.reaped
 	s.mu.Unlock()
 
 	_ = s.stdout.Close()
 
-	if s.cmd.Process != nil && s.cmd.ProcessState == nil {
+	if s.cmd.Process != nil && !reaped {
 		if err := syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 			// The group may already be gone; fall back to the direct child.
 			_ = s.cmd.Process.Kill()
@@ -262,16 +264,24 @@ func (s *stream) Close() error {
 
 // finalize waits for the child exactly once. It records the context error at
 // the moment the process ends so cancellation is reported to Read/Close
-// instead of masquerading as a clean EOF. The expected SIGKILL produced by
-// Close or cancellation itself is ignored; other wait errors are retained.
+// instead of masquerading as a clean EOF. A SIGKILL is suppressed only when it
+// was requested by Close or by the decoder context; an external kill (for
+// example from the OOM killer) is surfaced as a decode error.
 func (s *stream) finalize() {
 	s.waitOnce.Do(func() {
 		err := s.cmd.Wait()
-		if wasKilled(err) {
+
+		s.mu.Lock()
+		s.reaped = true
+		closed := s.closed
+		s.mu.Unlock()
+
+		ctxErr := s.ctx.Err()
+		if wasKilled(err) && (closed || ctxErr != nil) {
 			err = nil
 		}
 		s.waitErr = err
-		s.ctxErr = s.ctx.Err()
+		s.ctxErr = ctxErr
 	})
 }
 
@@ -282,8 +292,7 @@ func (s *stream) decodeError(err error) error {
 	return fmt.Errorf("ffmpeg: decoding %q with %q: %w", s.path, s.bin, err)
 }
 
-// wasKilled reports whether err is the SIGKILL exit status produced when a
-// stream is closed or canceled.
+// wasKilled reports whether err is an exit status caused by SIGKILL.
 func wasKilled(err error) bool {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {

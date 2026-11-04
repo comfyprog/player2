@@ -416,7 +416,7 @@ echo $$ > "$d/main.pid"
 sleep 30
 `)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	stream, err := New(bin).Open(ctx, audio.Request{Path: "/music/a.mp3"})
@@ -425,6 +425,9 @@ sleep 30
 	}
 
 	waitForFile(t, filepath.Join(dir, "main.pid"))
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("deadline fired before the stream was running: %v", err)
+	}
 	mainPID := readPID(t, filepath.Join(dir, "main.pid"))
 
 	readDone := make(chan error, 1)
@@ -451,6 +454,35 @@ sleep 30
 	}
 
 	waitGone(t, mainPID)
+}
+
+func TestExternalSIGKILLIsError(t *testing.T) {
+	dir := t.TempDir()
+	bin := writeScript(t, dir, `printf 'partial-pcm'
+kill -KILL $$
+`)
+
+	stream, err := New(bin).Open(context.Background(), audio.Request{Path: "/music/a.mp3"})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	data, err := io.ReadAll(stream)
+	if err == nil {
+		t.Fatalf("ReadAll() = %q, nil error; want external SIGKILL to be reported", data)
+	}
+	for _, want := range []string{"/music/a.mp3", "signal: killed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ReadAll() error = %q, want it to contain %q", err, want)
+		}
+	}
+	if closeErr := stream.Close(); closeErr == nil {
+		t.Error("Close() error = nil, want the external SIGKILL decode error to remain visible")
+	}
+	s := asStream(t, stream)
+	if s.cmd.ProcessState == nil {
+		t.Fatal("ProcessState = nil after external SIGKILL, want non-nil")
+	}
 }
 
 func TestStderrIncludedInDecodeError(t *testing.T) {
