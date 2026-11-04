@@ -42,6 +42,7 @@ player2 [directory]
 player2 --config PATH
 player2 --debug
 player2 --version
+player2 -h | --help
 ```
 
 - `--config PATH` reads exactly `PATH`; a missing explicit file is an error.
@@ -55,8 +56,12 @@ player2 --version
   stdout. Without `--debug`, logs are discarded.
 - `--version` prints `player2 <version>` and exits without reading
   configuration or checking FFmpeg or audio devices.
+- `-h`/`--help` prints usage and exits.
 - Diagnostics always go to stderr. Unknown flags and extra positional
   arguments are usage errors.
+- Put flags before the optional directory: flag parsing stops at the first
+  positional argument, so `player2 --debug ~/Music` works while
+  `player2 ~/Music --debug` is treated as extra arguments and rejected.
 
 The start directory is chosen in this order:
 

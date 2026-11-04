@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +16,7 @@ import (
 	"player2/internal/meta"
 	"player2/internal/player"
 	"player2/internal/queue"
+	"player2/internal/store"
 )
 
 func newPlaylistModel(t *testing.T, mutate func(*Options)) (*Model, *fakePlayer) {
@@ -67,7 +71,7 @@ func playlistPlain(m *Model) string {
 }
 
 func TestFlushQueueSavesLatestSnapshot(t *testing.T) {
-	m := newTestModel(t, nil)
+	m := newTestModel(t, func(opts *Options) { opts.Config.RestoreQueue = false })
 	store := m.store.(*fakeStore)
 	m.queue.Append(playlistItem("One", "Artist", 1, time.Minute))
 	m.queue.SetCurrent(0)
@@ -94,6 +98,7 @@ func TestFlushQueueSavesLatestSnapshot(t *testing.T) {
 func TestFlushQueueReturnsSaveError(t *testing.T) {
 	want := errors.New("disk full")
 	m := newTestModel(t, func(opts *Options) {
+		opts.Config.RestoreQueue = false
 		opts.Store = &fakeStore{saveErr: want}
 	})
 
@@ -109,7 +114,10 @@ func TestFlushQueueCannotBeOvertakenByOlderSave(t *testing.T) {
 		started: make(chan struct{}, 1),
 		release: make(chan struct{}),
 	}
-	m := newTestModel(t, func(opts *Options) { opts.Store = store })
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.RestoreQueue = false
+		opts.Store = store
+	})
 	m.queue.Append(playlistItem("Old", "", 0, time.Minute))
 
 	// Simulate an asynchronous save of the one-item queue that is still in
@@ -150,7 +158,10 @@ func TestFlushQueueCannotBeOvertakenByOlderSave(t *testing.T) {
 
 func TestFlushQueueSuppressesLateOlderSave(t *testing.T) {
 	store := &fakeStore{}
-	m := newTestModel(t, func(opts *Options) { opts.Store = store })
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.RestoreQueue = false
+		opts.Store = store
+	})
 	m.queue.Append(playlistItem("Old", "", 0, time.Minute))
 
 	// Schedule a save but do not start it; it is still "in flight" from the
@@ -1145,6 +1156,142 @@ func TestLateRestoreDoesNotClobberUserQueue(t *testing.T) {
 	}
 	if !strings.Contains(m.statusMsg, "restore skipped") {
 		t.Errorf("statusMsg = %q, want restore skipped", m.statusMsg)
+	}
+}
+
+func TestFlushQueueDoesNotOverwriteBeforeRestore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.json")
+	diskStore := store.New(path)
+	existing := queue.Snapshot{
+		Items: []queue.Item{
+			{ID: 1, Path: "/music/kept.flac", Title: "Kept", Duration: time.Minute},
+		},
+		Current: 0,
+	}
+	if err := diskStore.Save(existing); err != nil {
+		t.Fatalf("seed queue: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded queue: %v", err)
+	}
+
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = diskStore })
+	if !m.restorePending {
+		t.Fatal("restorePending = false with an enabled async restore")
+	}
+
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read queue after flush: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("FlushQueue rewrote the persisted queue before restore:\nbefore: %s\nafter:  %s", before, after)
+	}
+	if !m.restorePending {
+		t.Error("restorePending cleared without a restore or user mutation")
+	}
+}
+
+func TestFlushQueueAfterSuccessfulRestore(t *testing.T) {
+	restored := queue.Snapshot{
+		Items: []queue.Item{
+			{Path: "/music/a.flac", Title: "A", Duration: time.Minute},
+			{Path: "/music/b.flac", Title: "B", Duration: time.Minute},
+		},
+		Current: 1,
+	}
+	store := &fakeStore{snapshot: restored}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+
+	m = runCmd(t, m, m.restoreCmd())
+	if m.restorePending {
+		t.Fatal("restorePending stayed true after a successful restore")
+	}
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+
+	saved, ok := store.lastSaved()
+	if !ok {
+		t.Fatal("FlushQueue did not save after restore")
+	}
+	if got := len(saved.Items); got != 2 {
+		t.Fatalf("saved %d items, want the 2 restored items", got)
+	}
+	if saved.Current != 1 || saved.Items[1].Title != "B" {
+		t.Errorf("saved snapshot = %+v, want restored current item B", saved)
+	}
+}
+
+func TestUserMutationBeforeRestoreAllowsFlush(t *testing.T) {
+	store := &fakeStore{}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+	if !m.restorePending {
+		t.Fatal("restorePending = false before restore")
+	}
+
+	// A user/browser mutation makes the in-memory queue authoritative even
+	// though the startup restore has not returned.
+	m.queue.Append(playlistItem("Mine", "Artist", 1, time.Minute))
+	m.bumpQueueEpoch()
+	if m.restorePending {
+		t.Fatal("user mutation did not clear restorePending")
+	}
+
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+	saved, ok := store.lastSaved()
+	if !ok {
+		t.Fatal("user queue was not flushed")
+	}
+	if len(saved.Items) != 1 || saved.Items[0].Title != "Mine" {
+		t.Errorf("saved snapshot = %+v, want the user-created queue", saved)
+	}
+}
+
+func TestRestoreErrorLeavesPersistedQueueAlone(t *testing.T) {
+	store := &fakeStore{
+		snapshot: queue.Snapshot{
+			Items:   []queue.Item{{Path: "/music/kept.flac", Title: "Kept", Duration: time.Minute}},
+			Current: 0,
+		},
+		loadErr: errors.New("corrupt queue"),
+	}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+
+	m = runCmd(t, m, m.restoreCmd())
+	if !m.restorePending {
+		t.Fatal("restore error cleared restorePending")
+	}
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("restore error caused %d save(s), want 0", got)
+	}
+}
+
+func TestRestoreDisabledFlushesImmediately(t *testing.T) {
+	store := &fakeStore{}
+	m, _ := newPlaylistModel(t, func(opts *Options) {
+		opts.Config.RestoreQueue = false
+		opts.Store = store
+	})
+	if m.restorePending {
+		t.Fatal("restorePending = true with restore disabled")
+	}
+
+	m.queue.Append(playlistItem("Local", "", 0, time.Minute))
+	if err := m.FlushQueue(); err != nil {
+		t.Fatalf("FlushQueue() error = %v", err)
+	}
+	if _, ok := store.lastSaved(); !ok {
+		t.Fatal("restore-disabled model did not flush")
 	}
 }
 

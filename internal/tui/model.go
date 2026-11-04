@@ -123,6 +123,12 @@ type Model struct {
 	// queueEpoch increments on every user/browser queue mutation. A restore
 	// started earlier is dropped if the queue changed while it was loading.
 	queueEpoch uint64
+
+	// restorePending records that the startup queue restore has not completed
+	// successfully. FlushQueue must leave the on-disk queue alone while it is
+	// true so an early exit cannot overwrite a valid saved queue with an empty
+	// in-memory one.
+	restorePending bool
 }
 
 // tickMsg is delivered by the periodic status refresh.
@@ -152,6 +158,10 @@ func New(opts Options) *Model {
 		statusMsg:  "ready",
 		styles:     NewStyles(cfg.Colors),
 		probing:    make(map[uint64]string),
+
+		// Restore is asynchronous, so until it succeeds (or the user changes
+		// the queue) exit must not overwrite the persisted queue.
+		restorePending: cfg.RestoreQueue && opts.Store != nil,
 	}
 
 	keys, err := NewKeyMap(cfg)

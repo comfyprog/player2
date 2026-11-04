@@ -573,9 +573,12 @@ func (m *Model) playlistClear() tea.Cmd {
 }
 
 // bumpQueueEpoch records a user/browser queue mutation so a late restore is
-// ignored instead of clobbering the newer queue.
+// ignored instead of clobbering the newer queue. It also clears restorePending:
+// the in-memory queue is now intentional user state and must be saved even if
+// the startup restore never succeeds.
 func (m *Model) bumpQueueEpoch() {
 	m.queueEpoch++
+	m.restorePending = false
 }
 
 // applyTransportPlayResult applies the outcome of an asynchronous Play call.
@@ -635,6 +638,12 @@ func (m *Model) saveQueue() tea.Cmd {
 // the exit-time save. A nil store is a no-op.
 func (m *Model) FlushQueue() error {
 	if m.store == nil {
+		return nil
+	}
+	// The startup restore is asynchronous. Until it lands (or the user changes
+	// the queue), the in-memory queue is not authoritative and saving it would
+	// destroy a valid persisted queue on an immediate exit or Run error.
+	if m.restorePending {
 		return nil
 	}
 	snapshot := m.queue.Snapshot()
@@ -797,6 +806,7 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 		m.setStatusError("restore: " + err.Error())
 		return nil
 	}
+	m.restorePending = false
 
 	m.probing = make(map[uint64]string)
 	m.selectCurrent()
