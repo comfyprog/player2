@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"runtime"
 	"sync"
 	"time"
 
@@ -39,6 +38,8 @@ const (
 var (
 	errClosed      = errors.New("player: closed")
 	errSeekStopped = errors.New("player: seek requires playing or paused state")
+	errNilStream   = errors.New("player: decoder returned a nil stream")
+	errEmptyRead   = errors.New("player: decoder returned no data and no error")
 )
 
 // State is the playback transport state.
@@ -163,7 +164,8 @@ type Player struct {
 	stream *streamState
 	cancel context.CancelFunc
 
-	doneCh      chan struct{}
+	stopCh      chan struct{}
+	stopOnce    sync.Once
 	monitorDone chan struct{}
 }
 
@@ -197,13 +199,14 @@ func New(dec audio.Decoder, out audio.Sink, opts Options) (*Player, error) {
 		state:       StateStopped,
 		volume:      defaultVolume,
 		closeDone:   make(chan struct{}),
-		doneCh:      make(chan struct{}),
+		stopCh:      make(chan struct{}),
 		monitorDone: make(chan struct{}),
 	}
 
 	out.SetVolume(float64(p.volume) / 100)
 	out.SetPaused(true)
 	if err := out.Start(p.ring, p.rate, p.channels); err != nil {
+		_ = out.Close()
 		return nil, fmt.Errorf("player: start output: %w", err)
 	}
 	go p.monitor()
@@ -229,15 +232,8 @@ func (p *Player) Play(item queue.Item) error {
 	p.streamBase = 0
 	p.err = nil
 
-	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := p.dec.Open(ctx, audio.Request{
-		Path:       item.Path,
-		Start:      item.Start,
-		SampleRate: p.rate,
-		Channels:   p.channels,
-	})
+	stream, cancel, err := p.open(item.Path, item.Start)
 	if err != nil {
-		cancel()
 		p.err = err
 		return err
 	}
@@ -246,6 +242,31 @@ func (p *Player) Play(item queue.Item) error {
 	p.state = StatePlaying
 	p.out.SetPaused(false)
 	return nil
+}
+
+// open starts a decoder stream and rejects the pathological (nil, nil) result.
+// On any error a partially returned stream is closed so no decoder resources
+// leak.
+func (p *Player) open(path string, start time.Duration) (audio.Stream, context.CancelFunc, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := p.dec.Open(ctx, audio.Request{
+		Path:       path,
+		Start:      start,
+		SampleRate: p.rate,
+		Channels:   p.channels,
+	})
+	if err != nil {
+		cancel()
+		if stream != nil {
+			_ = stream.Close()
+		}
+		return nil, nil, err
+	}
+	if stream == nil {
+		cancel()
+		return nil, nil, errNilStream
+	}
+	return stream, cancel, nil
 }
 
 // Pause pauses output without consuming ring data. It is a no-op unless the
@@ -335,15 +356,8 @@ func (p *Player) SeekBy(delta time.Duration) error {
 	p.streamBase = 0
 	p.err = nil
 
-	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := p.dec.Open(ctx, audio.Request{
-		Path:       item.Path,
-		Start:      item.Start + target,
-		SampleRate: p.rate,
-		Channels:   p.channels,
-	})
+	stream, cancel, err := p.open(item.Path, item.Start+target)
 	if err != nil {
-		cancel()
 		p.err = err
 		return err
 	}
@@ -398,6 +412,10 @@ func (p *Player) Events() <-chan Event {
 // Close stops playback, stops the monitor, closes the sink, and closes the
 // event channel. It is idempotent.
 func (p *Player) Close() error {
+	// Unblock a monitor that is waiting to deliver an event. This happens
+	// before taking ctrl so a full event buffer cannot deadlock Close.
+	p.stopOnce.Do(func() { close(p.stopCh) })
+
 	p.ctrl.Lock()
 	if p.closed {
 		done := p.closeDone
@@ -416,7 +434,6 @@ func (p *Player) Close() error {
 	p.ring.Close()
 	p.ctrl.Unlock()
 
-	close(p.doneCh)
 	<-p.monitorDone
 	err := p.out.Close()
 
@@ -499,8 +516,10 @@ func (p *Player) decode(st *streamState) {
 			return
 		}
 		if n == 0 {
-			// A reader that returns no data and no error must not spin hot.
-			runtime.Gosched()
+			// A reader returning (0, nil) is not progress; surface it instead
+			// of spinning the decoder goroutine.
+			st.setErr(errEmptyRead)
+			return
 		}
 	}
 }
@@ -513,7 +532,7 @@ func (p *Player) monitor() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-p.doneCh:
+		case <-p.stopCh:
 			return
 		case <-ticker.C:
 			p.tick()
@@ -521,22 +540,32 @@ func (p *Player) monitor() {
 	}
 }
 
-// tick updates the position and emits at most one terminal event for the
-// current stream.
+// tick samples the current stream and delivers any terminal event outside the
+// control mutex. Delivery may block when the event buffer is full, but Close
+// closes stopCh and always unblocks it.
 func (p *Player) tick() {
+	ev, ok := p.tickLocked()
+	if ok {
+		p.emit(ev)
+	}
+}
+
+// tickLocked updates player state for the current stream and returns the event
+// to deliver, if any. It acquires ctrl itself; callers must not hold it.
+func (p *Player) tickLocked() (Event, bool) {
 	p.ctrl.Lock()
 	defer p.ctrl.Unlock()
 
 	if p.closed || p.stream == nil {
-		return
+		return Event{}, false
 	}
 	if p.state != StatePlaying && p.state != StatePaused {
-		return
+		return Event{}, false
 	}
 
 	st := p.stream
 	if st.gen != p.gen {
-		return
+		return Event{}, false
 	}
 	eof, decErr, done := st.snapshot()
 	pos := p.currentPositionLocked()
@@ -545,26 +574,26 @@ func (p *Player) tick() {
 	// still producing data (a CUE track is a slice of a longer file).
 	if p.item.Duration > 0 && pos >= p.item.Duration {
 		p.completeLocked(p.item.Duration)
-		p.emit(Event{Type: EventFinished})
-		return
+		return Event{Type: EventFinished}, true
 	}
 
 	if done && decErr != nil {
 		if errors.Is(decErr, audio.ErrAborted) || errors.Is(decErr, audio.ErrClosed) {
-			return
+			return Event{}, false
 		}
 		p.err = decErr
 		p.completeLocked(pos)
-		p.emit(Event{Type: EventError, Err: decErr})
-		return
+		return Event{Type: EventError, Err: decErr}, true
 	}
 
 	// Unknown duration, or a file shorter than its metadata: the track ends
 	// when the decoder is done and the ring has been fully consumed.
 	if done && eof && p.ring.Written() == p.ring.Consumed() {
 		p.completeLocked(pos)
-		p.emit(Event{Type: EventFinished})
+		return Event{Type: EventFinished}, true
 	}
+
+	return Event{}, false
 }
 
 // completeLocked stops the stream and freezes the final position. The caller
@@ -577,12 +606,13 @@ func (p *Player) completeLocked(final time.Duration) {
 	p.out.SetPaused(true)
 }
 
-// emit queues an event without blocking the monitor. Transport changes produce
-// at most one event each, so the buffer absorbs any reasonable burst.
+// emit delivers an event, blocking while the buffer is full so a finished or
+// error event is never lost during normal operation. Closing the player stops
+// the monitor and drops any event still waiting to be delivered.
 func (p *Player) emit(ev Event) {
 	select {
 	case p.events <- ev:
-	default:
+	case <-p.stopCh:
 	}
 }
 

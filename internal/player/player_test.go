@@ -308,6 +308,9 @@ func TestNewDefaultsAndStartFailure(t *testing.T) {
 	} else if !errors.Is(err, wantErr) {
 		t.Fatalf("New() error = %v, want %v", err, wantErr)
 	}
+	if !sink.closed {
+		t.Error("sink was not closed after Start failure")
+	}
 
 	// Nil dependencies are rejected.
 	if _, err := New(nil, &fakeSink{}, Options{}); err == nil {
@@ -619,6 +622,75 @@ func TestDecoderOpenErrorIsReturnedWithoutEvent(t *testing.T) {
 	expectNoEvent(t, p, 80*time.Millisecond)
 }
 
+func TestDecoderNilStreamIsAnError(t *testing.T) {
+	dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream { return nil }}
+	sink := &fakeSink{}
+	p := mustNew(t, dec, sink, Options{})
+
+	err := p.Play(queue.Item{Path: "/music/nil.flac"})
+	if err == nil {
+		t.Fatal("Play() with nil stream returned no error")
+	}
+	if !errors.Is(err, errNilStream) {
+		t.Errorf("Play() error = %v, want %v", err, errNilStream)
+	}
+	st := p.Status()
+	if st.State != StateStopped {
+		t.Errorf("state after nil stream = %v, want stopped", st.State)
+	}
+	if !errors.Is(st.Err, errNilStream) {
+		t.Errorf("Status().Err = %v, want %v", st.Err, errNilStream)
+	}
+	expectNoEvent(t, p, 80*time.Millisecond)
+}
+
+// emptyReadStream reports (0, nil) forever, violating the io.Reader contract.
+type emptyReadStream struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newEmptyReadStream() *emptyReadStream {
+	return &emptyReadStream{closed: make(chan struct{})}
+}
+
+func (s *emptyReadStream) Read([]byte) (int, error) {
+	select {
+	case <-s.closed:
+		return 0, io.ErrClosedPipe
+	default:
+		return 0, nil
+	}
+}
+
+func (s *emptyReadStream) Close() error {
+	s.once.Do(func() { close(s.closed) })
+	return nil
+}
+
+func TestDecoderEmptyReadIsAnError(t *testing.T) {
+	dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream {
+		return newEmptyReadStream()
+	}}
+	sink := &fakeSink{}
+	p := mustNew(t, dec, sink, Options{})
+
+	if err := p.Play(queue.Item{Path: "/music/stalled.flac"}); err != nil {
+		t.Fatalf("Play() error = %v", err)
+	}
+	ev := waitEvent(t, p)
+	if ev.Type != EventError {
+		t.Fatalf("event = %+v, want error", ev)
+	}
+	if !errors.Is(ev.Err, errEmptyRead) {
+		t.Errorf("event error = %v, want %v", ev.Err, errEmptyRead)
+	}
+	if st := p.Status(); st.State != StateStopped || !errors.Is(st.Err, errEmptyRead) {
+		t.Errorf("Status() = %+v, want stopped with %v", st, errEmptyRead)
+	}
+	expectNoEvent(t, p, 80*time.Millisecond)
+}
+
 // blockingStream yields a little data and then blocks in Read until it is
 // closed. It is used to check that a replaced decoder cannot emit events.
 type blockingStream struct {
@@ -757,7 +829,11 @@ func TestSetVolumeClampsAndReachesSink(t *testing.T) {
 }
 
 func TestCloseIsIdempotentAndTerminal(t *testing.T) {
-	dec := &fakeDecoder{}
+	// A blocking stream guarantees no finished event races with Close; the
+	// stream is only released by Close itself.
+	dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream {
+		return newBlockingStream([]byte{1, 2, 3, 4})
+	}}
 	sink := &fakeSink{}
 	p, err := New(dec, sink, Options{})
 	if err != nil {
@@ -792,6 +868,70 @@ func TestCloseIsIdempotentAndTerminal(t *testing.T) {
 	p.TogglePause()
 	p.Stop()
 	p.SetVolume(10)
+}
+
+func TestEventBufferFullDoesNotDropEvents(t *testing.T) {
+	dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream {
+		return newFakeStream(nil, nil) // immediate EOF with an empty ring
+	}}
+	sink := &fakeSink{}
+	p, err := New(dec, sink, Options{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	playToFinish := func(i int) {
+		t.Helper()
+		if err := p.Play(queue.Item{Path: fmt.Sprintf("/music/event-%d.wav", i)}); err != nil {
+			t.Fatalf("Play(%d) error = %v", i, err)
+		}
+		waitFor(t, fmt.Sprintf("item %d to finish", i), func() bool {
+			return p.Status().State == StateStopped
+		})
+	}
+
+	// Produce one more event than the buffer can hold without reading. The
+	// monitor must block on delivery rather than drop the last finished event.
+	total := eventBuffer + 1
+	for i := 0; i < total; i++ {
+		playToFinish(i)
+	}
+	for i := 0; i < total; i++ {
+		select {
+		case ev, ok := <-p.Events():
+			if !ok {
+				t.Fatalf("events channel closed after %d of %d events", i, total)
+			}
+			if ev.Type != EventFinished {
+				t.Fatalf("event %d = %+v, want finished", i, ev)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("timed out waiting for event %d of %d", i+1, total)
+		}
+	}
+	expectNoEvent(t, p, 80*time.Millisecond)
+
+	// Refill the buffer and leave the monitor blocked delivering one more
+	// event. Close must unblock it rather than deadlock.
+	for i := 0; i < eventBuffer; i++ {
+		playToFinish(i)
+	}
+	playToFinish(eventBuffer)
+
+	closed := make(chan error, 1)
+	go func() { closed <- p.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close deadlocked with a full event buffer")
+	}
+
+	// Buffered events are still readable; then the channel is closed.
+	for range p.Events() {
+	}
 }
 
 func TestNoGoroutineLeaks(t *testing.T) {
