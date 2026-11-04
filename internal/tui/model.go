@@ -219,10 +219,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case browserPlayResultMsg:
 		m.applyBrowserPlayResult(msg)
-		if msg.gen != m.browserGen {
-			return m, nil
-		}
-		return m, m.afterQueueChange()
+		return m, nil
 
 	case browserAddMsg:
 		return m, m.applyBrowserAdd(msg)

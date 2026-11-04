@@ -613,22 +613,27 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 	m.playlistSelected = selected
 	m.clampPlaylist()
 
+	// Probing and persistence belong to the queue replacement, not to the
+	// playback startup, so start them before Play can block on a decoder.
+	queueWork := m.afterQueueChange()
+
 	player := m.player
 	item, ok := m.queue.Current()
 	if player == nil || !ok {
 		m.setStatusOK(msg.status)
-		return m.afterQueueChange()
+		return queueWork
 	}
 
 	gen := msg.gen
 	status := msg.status
-	return func() tea.Msg {
+	play := func() tea.Msg {
 		return browserPlayResultMsg{
 			gen:    gen,
 			status: status,
 			err:    player.Play(item),
 		}
 	}
+	return tea.Batch(play, queueWork)
 }
 
 // applyBrowserPlayResult applies the status of an asynchronous Play call.

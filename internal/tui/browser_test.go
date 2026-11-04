@@ -137,14 +137,44 @@ func applyBrowserCmd(t *testing.T, m *Model, cmd tea.Cmd) *Model {
 	if !ok {
 		t.Fatalf("Update returned %T, want *Model", next)
 	}
-	if follow != nil {
-		next, _ = updated.Update(follow())
-		updated, ok = next.(*Model)
-		if !ok {
-			t.Fatalf("Update returned %T, want *Model", next)
-		}
+	return applyBrowserFollow(t, updated, follow)
+}
+
+// applyBrowserFollow drives follow-up command trees, including batches of
+// probing, persistence, and playback commands.
+func applyBrowserFollow(t *testing.T, m *Model, cmd tea.Cmd) *Model {
+	t.Helper()
+	if cmd == nil {
+		return m
 	}
-	return updated
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, sub := range batch {
+			m = applyBrowserFollow(t, m, sub)
+		}
+		return m
+	}
+	next, follow := m.Update(msg)
+	updated, ok := next.(*Model)
+	if !ok {
+		t.Fatalf("Update returned %T, want *Model", next)
+	}
+	return applyBrowserFollow(t, updated, follow)
+}
+
+// runAsyncCmd executes a command tree concurrently and delivers every leaf
+// message to out. It is used by tests where Play blocks until released.
+func runAsyncCmd(cmd tea.Cmd, out chan<- tea.Msg) {
+	go func() {
+		msg := cmd()
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				runAsyncCmd(sub, out)
+			}
+			return
+		}
+		out <- msg
+	}()
 }
 
 func audioEntry(name, path string) library.Entry {
@@ -818,8 +848,8 @@ func TestBrowserPlayRunsInCommand(t *testing.T) {
 			t.Fatalf("queue length = %d before Play command, want 1", got)
 		}
 
-		result := make(chan tea.Msg, 1)
-		go func() { result <- playCmd() }()
+		result := make(chan tea.Msg, 16)
+		runAsyncCmd(playCmd, result)
 		select {
 		case <-bp.started:
 		case <-time.After(time.Second):
@@ -827,14 +857,23 @@ func TestBrowserPlayRunsInCommand(t *testing.T) {
 		}
 		close(bp.release)
 
-		var msg tea.Msg
-		select {
-		case msg = <-result:
-		case <-time.After(time.Second):
-			t.Fatal("Play command did not return")
+		deadline := time.After(2 * time.Second)
+		seenResult := false
+		for !seenResult {
+			select {
+			case msg := <-result:
+				if _, ok := msg.(browserPlayResultMsg); ok {
+					seenResult = true
+				}
+				next, follow := m.Update(msg)
+				m = next.(*Model)
+				if follow != nil {
+					runAsyncCmd(follow, result)
+				}
+			case <-deadline:
+				t.Fatal("Play command did not return")
+			}
 		}
-		next, _ = m.Update(msg)
-		m = next.(*Model)
 		if bp.calls != 1 {
 			t.Errorf("Play calls = %d, want 1", bp.calls)
 		}
@@ -859,12 +898,32 @@ func TestBrowserPlayRunsInCommand(t *testing.T) {
 			t.Fatal("browserPlayMsg returned no Play command")
 		}
 
-		result := make(chan tea.Msg, 1)
-		go func() { result <- playCmd() }()
-		<-bp.started
+		result := make(chan tea.Msg, 16)
+		runAsyncCmd(playCmd, result)
+		select {
+		case <-bp.started:
+		case <-time.After(time.Second):
+			t.Fatal("Play command did not call Play")
+		}
 		close(bp.release)
-		next, _ = m.Update(<-result)
-		m = next.(*Model)
+
+		deadline := time.After(2 * time.Second)
+		seenResult := false
+		for !seenResult {
+			select {
+			case msg := <-result:
+				if _, ok := msg.(browserPlayResultMsg); ok {
+					seenResult = true
+				}
+				next, follow := m.Update(msg)
+				m = next.(*Model)
+				if follow != nil {
+					runAsyncCmd(follow, result)
+				}
+			case <-deadline:
+				t.Fatal("Play command did not return")
+			}
+		}
 		if !m.statusIsError {
 			t.Error("statusIsError = false after failed play")
 		}

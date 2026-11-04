@@ -963,6 +963,88 @@ func TestBrowserAppendSchedulesProbes(t *testing.T) {
 	}
 }
 
+func TestBrowserPlaySchedulesQueueWorkBeforePlayCompletes(t *testing.T) {
+	prober := &fakeProber{info: map[string]meta.Info{
+		"/music/song.mp3": {Title: "Probed", Duration: time.Minute},
+	}}
+	player := newControlledPlayer()
+	store := &fakeStore{}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Player = player
+		opts.Store = store
+		opts.Prober = prober
+		opts.StartDir = "/music"
+	})
+	m = resize(t, m, 100, 30)
+
+	cmd := m.applyBrowserPlay(browserPlayMsg{
+		gen:      m.browserGen,
+		items:    []queue.Item{{Path: "/music/song.mp3", Title: "song"}},
+		selected: 0,
+		status:   "playing 1 item(s)",
+	})
+	if cmd == nil {
+		t.Fatal("browser play returned no command")
+	}
+
+	msgs := make(chan tea.Msg, 32)
+	runAsyncCmd(cmd, msgs)
+	select {
+	case <-player.started:
+	case <-time.After(time.Second):
+		t.Fatal("Play did not start")
+	}
+
+	// Play is blocked on release here: probing and saving must already have run.
+	deadline := time.After(2 * time.Second)
+	seenProbe, seenSave := false, false
+	for !seenProbe || !seenSave {
+		select {
+		case msg := <-msgs:
+			switch msg.(type) {
+			case queueMetadataMsg:
+				seenProbe = true
+			case queueSavedMsg:
+				seenSave = true
+			}
+			next, follow := m.Update(msg)
+			m = next.(*Model)
+			if follow != nil {
+				runAsyncCmd(follow, msgs)
+			}
+		case <-deadline:
+			t.Fatalf("queue work waited for Play: probe=%v save=%v", seenProbe, seenSave)
+		}
+	}
+	if len(player.played) != 0 {
+		t.Fatal("Play completed before the queue work")
+	}
+
+	close(player.release)
+	deadline = time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-msgs:
+			next, follow := m.Update(msg)
+			m = next.(*Model)
+			if follow != nil {
+				runAsyncCmd(follow, msgs)
+			}
+			if _, ok := msg.(browserPlayResultMsg); ok {
+				if m.statusIsError {
+					t.Errorf("statusIsError = true after successful play: %q", m.statusMsg)
+				}
+				if !strings.Contains(m.statusMsg, "playing") {
+					t.Errorf("statusMsg = %q, want playing status", m.statusMsg)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("Play result was not delivered")
+		}
+	}
+}
+
 func TestTransportWorksFromBrowserFocus(t *testing.T) {
 	m, fp := newPlaylistModel(t, nil)
 	m.focus = PaneBrowser
