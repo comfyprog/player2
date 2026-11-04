@@ -194,7 +194,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case browserPlayMsg:
-		m.applyBrowserPlay(msg)
+		return m, m.applyBrowserPlay(msg)
+
+	case browserPlayResultMsg:
+		m.applyBrowserPlayResult(msg)
 		return m, nil
 
 	case browserAddMsg:

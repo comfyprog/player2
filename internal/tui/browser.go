@@ -38,6 +38,13 @@ type browserPlayMsg struct {
 	err      error
 }
 
+// browserPlayResultMsg reports the outcome of the asynchronous Play call.
+type browserPlayResultMsg struct {
+	gen    uint64
+	status string
+	err    error
+}
+
 // browserAddMsg is the result of expanding a selection into queue items.
 type browserAddMsg struct {
 	gen    uint64
@@ -264,6 +271,12 @@ func entryKey(entry library.Entry) string {
 // generation is incremented before the command runs so a stale result can be
 // recognised and ignored.
 func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus string) tea.Cmd {
+	// A new location must not expose entries from the previous one while the
+	// asynchronous read is in flight. Rescans of the same path keep them.
+	if m.browserEntriesPath != path {
+		m.browserEntries = nil
+		m.browserEntriesPath = ""
+	}
 	m.browserPath = path
 	m.browserCue = cue
 	m.browserSelected = selected
@@ -339,7 +352,17 @@ func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) {
 		}
 	}
 	m.clampBrowser()
-	m.statusIsError = false
+	if m.statusIsError {
+		m.setStatusOK("ready")
+	}
+}
+
+// clearBrowserFilter removes the active filter and search input. Navigation
+// starts with an unfiltered listing; a rescan deliberately keeps the filter.
+func (m *Model) clearBrowserFilter() {
+	m.browserFilter = ""
+	m.browserSearch = ""
+	m.browserSearching = false
 }
 
 // descend pushes the current location and loads a child directory or CUE
@@ -351,6 +374,7 @@ func (m *Model) descend(entry library.Entry) tea.Cmd {
 		Offset:   m.browserOffset,
 		Cue:      m.browserCue,
 	})
+	m.clearBrowserFilter()
 	if entry.Kind == library.KindCueDir {
 		return m.loadBrowser(entry.Path, true, 0, 0, "")
 	}
@@ -364,6 +388,7 @@ func (m *Model) browserBack() tea.Cmd {
 	}
 	location := m.browserStack[len(m.browserStack)-1]
 	m.browserStack = m.browserStack[:len(m.browserStack)-1]
+	m.clearBrowserFilter()
 	return m.loadBrowser(location.Path, location.Cue, location.Selected, location.Offset, "")
 }
 
@@ -379,6 +404,9 @@ func (m *Model) rescanBrowser() tea.Cmd {
 
 // browserOpen handles Enter at the browser.
 func (m *Model) browserOpen() tea.Cmd {
+	if m.browserLoading {
+		return nil
+	}
 	entry, ok := m.browserSelectedEntry()
 	if !ok {
 		return nil
@@ -455,6 +483,9 @@ func (m *Model) playPlaylist(path string) tea.Cmd {
 
 // addSelected handles `a` at the browser.
 func (m *Model) addSelected() tea.Cmd {
+	if m.browserLoading {
+		return nil
+	}
 	entry, ok := m.browserSelectedEntry()
 	if !ok {
 		return nil
@@ -551,10 +582,12 @@ func (m *Model) singleAdd(item queue.Item) tea.Cmd {
 	}
 }
 
-// applyBrowserPlay installs the replacement queue and starts playback.
-func (m *Model) applyBrowserPlay(msg browserPlayMsg) {
+// applyBrowserPlay installs the replacement queue and returns a command that
+// starts playback. Play is blocking (it opens a decoder subprocess), so it must
+// run in a Bubble Tea command rather than in Update.
+func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 	if msg.gen != m.browserGen {
-		return
+		return nil
 	}
 	if msg.err != nil {
 		status := msg.status
@@ -562,11 +595,11 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) {
 			status = msg.err.Error()
 		}
 		m.setStatusError(status)
-		return
+		return nil
 	}
 	if len(msg.items) == 0 {
 		m.setStatusOK("nothing to play")
-		return
+		return nil
 	}
 
 	m.queue.Replace(msg.items...)
@@ -576,14 +609,32 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) {
 	}
 	m.queue.SetCurrent(selected)
 
-	if m.player != nil {
-		item, ok := m.queue.Current()
-		if ok {
-			if err := m.player.Play(item); err != nil {
-				m.setStatusError("play: " + err.Error())
-				return
-			}
+	player := m.player
+	item, ok := m.queue.Current()
+	if player == nil || !ok {
+		m.setStatusOK(msg.status)
+		return nil
+	}
+
+	gen := msg.gen
+	status := msg.status
+	return func() tea.Msg {
+		return browserPlayResultMsg{
+			gen:    gen,
+			status: status,
+			err:    player.Play(item),
 		}
+	}
+}
+
+// applyBrowserPlayResult applies the status of an asynchronous Play call.
+func (m *Model) applyBrowserPlayResult(msg browserPlayResultMsg) {
+	if msg.gen != m.browserGen {
+		return
+	}
+	if msg.err != nil {
+		m.setStatusError("play: " + msg.err.Error())
+		return
 	}
 	m.setStatusOK(msg.status)
 }

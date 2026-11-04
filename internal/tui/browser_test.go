@@ -71,6 +71,48 @@ func newBrowserModel(t *testing.T, scanner Scanner) (*Model, *fakePlayer) {
 	return m, fp
 }
 
+func newBrowserModelWithPlayer(t *testing.T, scanner Scanner, player Player) *Model {
+	t.Helper()
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = scanner
+		opts.Player = player
+		opts.StartDir = "/music"
+	})
+	return resize(t, m, 100, 30)
+}
+
+// controlledPlayer records Play calls and optionally blocks until released.
+type controlledPlayer struct {
+	*fakePlayer
+	started chan struct{}
+	release chan struct{}
+	playErr error
+	calls   int
+}
+
+func newControlledPlayer() *controlledPlayer {
+	return &controlledPlayer{
+		fakePlayer: newFakePlayer(),
+		started:    make(chan struct{}, 1),
+		release:    make(chan struct{}),
+	}
+}
+
+func (p *controlledPlayer) Play(item queue.Item) error {
+	p.calls++
+	select {
+	case p.started <- struct{}{}:
+	default:
+	}
+	if p.release != nil {
+		<-p.release
+	}
+	if p.playErr != nil {
+		return p.playErr
+	}
+	return p.fakePlayer.Play(item)
+}
+
 func pressForCmd(t *testing.T, m *Model, msg tea.KeyPressMsg) (*Model, tea.Cmd) {
 	t.Helper()
 	next, cmd := m.Update(msg)
@@ -90,10 +132,17 @@ func applyBrowserCmd(t *testing.T, m *Model, cmd tea.Cmd) *Model {
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		t.Fatalf("unexpected batch message with %d commands", len(batch))
 	}
-	next, _ := m.Update(msg)
+	next, follow := m.Update(msg)
 	updated, ok := next.(*Model)
 	if !ok {
 		t.Fatalf("Update returned %T, want *Model", next)
+	}
+	if follow != nil {
+		next, _ = updated.Update(follow())
+		updated, ok = next.(*Model)
+		if !ok {
+			t.Fatalf("Update returned %T, want *Model", next)
+		}
 	}
 	return updated
 }
@@ -691,5 +740,226 @@ func TestBrowserEmptyDirectoryAndRescanPreservesSelection(t *testing.T) {
 	}
 	if m.browserSelected != 1 {
 		t.Errorf("selected after rescan = %d, want 1 (b.flac)", m.browserSelected)
+	}
+}
+
+func TestBrowserActionsIgnoredWhileLoading(t *testing.T) {
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		"/music/Other": {audioEntry("other.flac", "/music/Other/other.flac")},
+	}}
+	m, fp := newBrowserModel(t, sc)
+	m.browserEntries = []library.Entry{
+		{Kind: library.KindDir, Name: "Stale", Path: "/music/Stale"},
+		audioEntry("stale.flac", "/music/stale.flac"),
+	}
+	m.browserEntriesPath = "/music"
+
+	// Starting a load for a new path clears the old listing immediately.
+	loadCmd := m.loadBrowser("/music/Other", false, 0, 0, "")
+	if loadCmd == nil {
+		t.Fatal("loadBrowser returned no command")
+	}
+	if !m.browserLoading {
+		t.Error("browserLoading = false after starting a load")
+	}
+	if len(m.browserEntries) != 0 || m.browserEntriesPath != "" {
+		t.Errorf("stale listing survived navigation: entries=%d path=%q", len(m.browserEntries), m.browserEntriesPath)
+	}
+
+	// Belt-and-braces: even if a caller leaves stale entries visible while a
+	// load is in flight, actions must not operate on them.
+	m.browserEntries = []library.Entry{
+		{Kind: library.KindDir, Name: "Stale", Path: "/music/Stale"},
+		audioEntry("stale.flac", "/music/stale.flac"),
+	}
+	m.browserEntriesPath = "/music"
+	m.browserLoading = true
+	m.browserSelected = 0
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	if cmd != nil {
+		t.Errorf("Enter while loading returned command %T, want nil", cmd)
+	}
+	if len(m.browserStack) != 0 {
+		t.Errorf("Enter while loading pushed %d stack entries", len(m.browserStack))
+	}
+
+	m, cmd = pressForCmd(t, m, runeKey('a'))
+	if cmd != nil {
+		t.Errorf("add while loading returned command %T, want nil", cmd)
+	}
+	if got := len(m.queue.Snapshot().Items); got != 0 {
+		t.Errorf("queue length = %d after actions while loading, want 0", got)
+	}
+	if len(fp.played) != 0 {
+		t.Errorf("player played %d items while loading, want 0", len(fp.played))
+	}
+}
+
+func TestBrowserPlayRunsInCommand(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		bp := newControlledPlayer()
+		m := newBrowserModelWithPlayer(t, &testScanner{}, bp)
+		m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
+
+		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		if cmd == nil {
+			t.Fatal("Enter returned no build command")
+		}
+		next, playCmd := m.Update(cmd())
+		m = next.(*Model)
+		if playCmd == nil {
+			t.Fatal("browserPlayMsg returned no Play command")
+		}
+		if bp.calls != 0 {
+			t.Fatalf("Play called %d times inside Update, want 0", bp.calls)
+		}
+		if got := len(m.queue.Snapshot().Items); got != 1 {
+			t.Fatalf("queue length = %d before Play command, want 1", got)
+		}
+
+		result := make(chan tea.Msg, 1)
+		go func() { result <- playCmd() }()
+		select {
+		case <-bp.started:
+		case <-time.After(time.Second):
+			t.Fatal("Play command did not call Play")
+		}
+		close(bp.release)
+
+		var msg tea.Msg
+		select {
+		case msg = <-result:
+		case <-time.After(time.Second):
+			t.Fatal("Play command did not return")
+		}
+		next, _ = m.Update(msg)
+		m = next.(*Model)
+		if bp.calls != 1 {
+			t.Errorf("Play calls = %d, want 1", bp.calls)
+		}
+		if m.statusIsError {
+			t.Errorf("statusIsError = true after successful play: %q", m.statusMsg)
+		}
+		if !strings.Contains(m.statusMsg, "playing") {
+			t.Errorf("statusMsg = %q, want playing status", m.statusMsg)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		bp := newControlledPlayer()
+		bp.playErr = errors.New("decoder failed")
+		m := newBrowserModelWithPlayer(t, &testScanner{}, bp)
+		m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
+
+		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		next, playCmd := m.Update(cmd())
+		m = next.(*Model)
+		if playCmd == nil {
+			t.Fatal("browserPlayMsg returned no Play command")
+		}
+
+		result := make(chan tea.Msg, 1)
+		go func() { result <- playCmd() }()
+		<-bp.started
+		close(bp.release)
+		next, _ = m.Update(<-result)
+		m = next.(*Model)
+		if !m.statusIsError {
+			t.Error("statusIsError = false after failed play")
+		}
+		if !strings.Contains(m.statusMsg, "decoder failed") {
+			t.Errorf("statusMsg = %q, want decoder failure", m.statusMsg)
+		}
+	})
+}
+
+func TestBrowserDownMovesOneEntry(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+		audioEntry("three.flac", "/music/three.flac"),
+	}
+
+	m, _ = pressForCmd(t, m, specialKey(tea.KeyDown))
+	if m.browserSelected != 1 {
+		t.Fatalf("selected after one Down = %d, want 1", m.browserSelected)
+	}
+	m, _ = pressForCmd(t, m, specialKey(tea.KeyDown))
+	if m.browserSelected != 2 {
+		t.Errorf("selected after two Downs = %d, want 2", m.browserSelected)
+	}
+}
+
+func TestBrowserSuccessfulLoadClearsErrorStatus(t *testing.T) {
+	sc := &testScanner{dirErr: map[string]error{"/music": errors.New("read failed")}}
+	m, _ := newBrowserModel(t, sc)
+	m.browserEntries = []library.Entry{audioEntry("old.flac", "/music/old.flac")}
+	m.browserEntriesPath = "/music"
+
+	m, cmd := pressForCmd(t, m, runeKey('R'))
+	m = applyBrowserCmd(t, m, cmd)
+	if !m.statusIsError || !strings.Contains(m.statusMsg, "read failed") {
+		t.Fatalf("status after failed rescan = %q (error=%v), want error", m.statusMsg, m.statusIsError)
+	}
+
+	delete(sc.dirErr, "/music")
+	sc.dirs = map[string][]library.Entry{"/music": {audioEntry("new.flac", "/music/new.flac")}}
+	m, cmd = pressForCmd(t, m, runeKey('R'))
+	m = applyBrowserCmd(t, m, cmd)
+	if m.statusIsError {
+		t.Errorf("statusIsError = true after successful load: %q", m.statusMsg)
+	}
+	if strings.Contains(m.statusMsg, "read failed") {
+		t.Errorf("stale error text survived recovery: %q", m.statusMsg)
+	}
+	if m.statusMsg != "ready" {
+		t.Errorf("statusMsg = %q, want ready after recovery", m.statusMsg)
+	}
+}
+
+func TestBrowserNavigationClearsFilter(t *testing.T) {
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		"/music": {
+			{Kind: library.KindDir, Name: "Album", Path: "/music/Album"},
+			audioEntry("Alpha.flac", "/music/Alpha.flac"),
+		},
+		"/music/Album": {audioEntry("inside.flac", "/music/Album/inside.flac")},
+	}}
+	m, _ := newBrowserModel(t, sc)
+	m.browserEntries = sc.dirs["/music"]
+	m.browserEntriesPath = "/music"
+	m.browserFilter = "Alb"
+	m.browserSearch = "Alb"
+	m.browserSelected = 0
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+	if m.browserPath != "/music/Album" {
+		t.Fatalf("path after descend = %q, want /music/Album", m.browserPath)
+	}
+	if m.browserFilter != "" || m.browserSearch != "" || m.browserSearching {
+		t.Errorf("filter survived descend: filter=%q search=%q active=%v", m.browserFilter, m.browserSearch, m.browserSearching)
+	}
+
+	m.browserFilter = "inn"
+	m.browserSearch = "inn"
+	m, cmd = pressForCmd(t, m, specialKey(tea.KeyBackspace))
+	m = applyBrowserCmd(t, m, cmd)
+	if m.browserPath != "/music" {
+		t.Fatalf("path after back = %q, want /music", m.browserPath)
+	}
+	if m.browserFilter != "" || m.browserSearch != "" {
+		t.Errorf("filter survived back: filter=%q search=%q", m.browserFilter, m.browserSearch)
+	}
+
+	// Rescan keeps the accepted filter.
+	m.browserFilter = "Alb"
+	m.browserSearch = "Alb"
+	m, cmd = pressForCmd(t, m, runeKey('R'))
+	m = applyBrowserCmd(t, m, cmd)
+	if m.browserFilter != "Alb" || m.browserSearch != "Alb" {
+		t.Errorf("filter lost on rescan: filter=%q search=%q", m.browserFilter, m.browserSearch)
 	}
 }
