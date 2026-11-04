@@ -45,9 +45,12 @@ func (m *Model) render() string {
 	bodyHeight := m.height - headerRows - footerRows
 	lines := make([]string, 0, m.height)
 	lines = append(lines, m.headerLine())
-	if m.help {
+	switch {
+	case m.promptOpen():
+		lines = append(lines, m.promptLines(bodyHeight)...)
+	case m.help:
 		lines = append(lines, m.helpLines(bodyHeight)...)
-	} else {
+	default:
 		lines = append(lines, m.bodyLines(bodyHeight)...)
 	}
 	lines = append(lines, m.statusLine(), m.hintsLine())

@@ -616,6 +616,10 @@ func TestClearStopsAndEmpties(t *testing.T) {
 	m.playlistSelected = 1
 
 	m, cmd := pressForCmd(t, m, runeKey('c'))
+	if m.prompt.mode != promptConfirmClear {
+		t.Fatal("c did not open the clear confirmation")
+	}
+	m, cmd = pressForCmd(t, m, runeKey('y'))
 	m = runCmd(t, m, cmd)
 	if got := len(m.queue.Snapshot().Items); got != 0 {
 		t.Errorf("queue length = %d, want 0", got)

@@ -423,6 +423,12 @@ func (m *Model) browserOpen() tea.Cmd {
 		m.setStatusError(message)
 		return nil
 	case library.KindPlaylist:
+		// Stop the previous stream before the asynchronous load replaces the
+		// queue; Stop is a fast control call.
+		if m.player != nil {
+			m.player.Stop()
+			m.refresh()
+		}
 		return m.playPlaylist(entry.Path)
 	case library.KindAudio, library.KindCueTrack:
 		return m.playLevel(entry)

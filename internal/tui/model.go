@@ -64,6 +64,10 @@ type Model struct {
 	focus  Pane
 	help   bool
 
+	// prompt is the single modal (text input or confirmation) currently
+	// capturing keys.
+	prompt promptState
+
 	// helpOffset is the first help binding row shown while the overlay is
 	// open. It lets the full keymap be reached on short terminals.
 	helpOffset int
@@ -206,6 +210,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.clampBrowser()
 		m.clampPlaylist()
+		if m.promptOpen() {
+			m.prompt.input.SetWidth(m.promptInputWidth())
+		}
 		if m.help {
 			m.clampHelpOffset()
 		}
@@ -251,6 +258,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case queueMetadataMsg:
 		return m, m.applyQueueMetadata(msg)
+
+	case playlistSavedMsg:
+		m.applyPlaylistSaved(msg)
+		return m, nil
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -308,6 +319,12 @@ func (m *Model) setStatusOK(message string) {
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
+	// A prompt is the most modal surface: it sees keys before help, search,
+	// and pane actions.
+	if m.promptOpen() {
+		return m.handlePromptKey(msg)
+	}
+
 	// The help overlay is modal: it swallows pane/transport actions while it
 	// is open and only supports closing, quitting, and scrolling.
 	if m.help {
@@ -343,6 +360,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.clampPlaylist()
 		return m, nil
+	case ActionSavePlaylist:
+		return m, m.openSavePrompt()
 	}
 
 	if cmd, handled := m.handleTransportAction(action); handled {
