@@ -84,6 +84,7 @@ All keys are configurable; these are the defaults.
 | Quit | `q`, `Ctrl+C` | Exit player2 |
 | Help | `?` | Show the full key map |
 | Switch pane | `Tab` | Move between the browser and playlist |
+| Zoom active pane | `z` | Show only the focused pane |
 | Open/play | `Enter` | Open a directory/CUE folder or play the selection |
 | Parent directory | `Backspace` | Go up one directory |
 | Move up/down | `Up`/`k`, `Down`/`j` | Move the selection |
@@ -113,6 +114,11 @@ shows embedded tags instead: track number, title, album, and artist, with long
 rows truncated using `…`. Files without usable tags keep their filename. Tags
 are read lazily with `ffprobe`, so browsing filenames does not probe every file;
 the status line shows `[FILENAME]` or `[TAG]` to indicate the active view.
+
+Pressing `z` (`toggle_zoom` in `[keys]`) hides the inactive pane and shows the
+focused one at full width. Pressing `z` again restores both panes. `Tab` also
+leaves zoom and moves focus to the other pane. Zoom is not persisted across
+runs.
 
 ## Configuration
 

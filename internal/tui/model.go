@@ -65,6 +65,7 @@ type Model struct {
 	height int
 	focus  Pane
 	help   bool
+	zoomed bool
 
 	// prompt is the single modal (text input or confirmation) currently
 	// capturing keys.
@@ -394,7 +395,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.focus = PaneBrowser
 		}
+		m.zoomed = false
 		m.clampPlaylist()
+		return m, nil
+	case ActionToggleZoom:
+		m.zoomed = !m.zoomed
 		return m, nil
 	case ActionSavePlaylist:
 		return m, m.openSavePrompt()

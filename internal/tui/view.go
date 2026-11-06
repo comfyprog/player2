@@ -58,10 +58,15 @@ func (m *Model) render() string {
 	return strings.Join(lines, "\n")
 }
 
-// bodyLines joins the two panes with a dim divider.
+// bodyLines joins the two panes with a dim divider, or renders only the
+// focused pane at full width while zoomed.
 func (m *Model) bodyLines(height int) []string {
 	if height <= 0 {
 		return nil
+	}
+
+	if m.zoomed {
+		return m.paneLines(m.focus, m.width, height)
 	}
 
 	leftWidth := (m.width - 1) / 2

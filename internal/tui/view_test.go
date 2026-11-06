@@ -90,6 +90,60 @@ func TestViewResizeAndMinimumSize(t *testing.T) {
 	}
 }
 
+func TestZoomShowsOnlyFocusedPane(t *testing.T) {
+	m := resize(t, newTestModel(t, nil), 80, 24)
+
+	m = press(t, m, runeKey('z'))
+	content := m.View().Content
+	plain := ansi.Strip(content)
+	if !strings.Contains(plain, "Files:") {
+		t.Errorf("zoomed browser view missing browser pane: %q", plain)
+	}
+	if strings.Contains(plain, "Playlist (") {
+		t.Errorf("zoomed browser view still shows playlist pane: %q", plain)
+	}
+	for i, line := range strings.Split(content, "\n") {
+		if width := ansi.StringWidth(line); width != 80 {
+			t.Errorf("zoomed browser line %d width = %d, want 80", i, width)
+		}
+	}
+
+	m = press(t, m, runeKey('z'))
+	plain = ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Files:") || !strings.Contains(plain, "Playlist (") {
+		t.Errorf("unzoomed view missing a pane: %q", plain)
+	}
+}
+
+func TestZoomPlaylistAndTabExitsZoom(t *testing.T) {
+	m := resize(t, newTestModel(t, nil), 60, 10)
+
+	m = press(t, m, specialKey(tea.KeyTab))
+	m = press(t, m, runeKey('z'))
+	content := m.View().Content
+	plain := ansi.Strip(content)
+	if strings.Contains(plain, "Files:") {
+		t.Errorf("zoomed playlist view still shows browser pane: %q", plain)
+	}
+	if !strings.Contains(plain, "Playlist (") {
+		t.Errorf("zoomed playlist view missing playlist pane: %q", plain)
+	}
+	for i, line := range strings.Split(content, "\n") {
+		if width := ansi.StringWidth(line); width != 60 {
+			t.Errorf("zoomed playlist line %d width = %d, want 60", i, width)
+		}
+	}
+
+	m = press(t, m, specialKey(tea.KeyTab))
+	if m.focus != PaneBrowser {
+		t.Errorf("focus = %v after Tab from zoomed playlist, want browser", m.focus)
+	}
+	plain = ansi.Strip(m.View().Content)
+	if !strings.Contains(plain, "Files:") || !strings.Contains(plain, "Playlist (") {
+		t.Errorf("Tab in zoomed mode did not restore both panes: %q", plain)
+	}
+}
+
 func TestViewWideCharacterTruncation(t *testing.T) {
 	m := newTestModel(t, func(opts *Options) {
 		opts.StartDir = "/tmp/" + strings.Repeat("音楽ファイル", 20) + "/😀😀😀😀😀"
@@ -125,7 +179,7 @@ func TestViewHelpToggle(t *testing.T) {
 		t.Fatal("help flag not set after ?")
 	}
 	plain := ansi.Strip(m.View().Content)
-	for _, want := range []string{"Keys", "Quit", "Switch pane", "Save playlist", "Go to playing"} {
+	for _, want := range []string{"Keys", "Quit", "Switch pane", "Zoom active pane", "Save playlist", "Go to playing"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("help overlay missing %q\n%s", want, plain)
 		}
@@ -146,8 +200,8 @@ func TestViewHelpShowsAllBindingsAtNormalSize(t *testing.T) {
 
 	plain := ansi.Strip(m.View().Content)
 	bindings := m.keys.Bindings()
-	if len(bindings) != 33 {
-		t.Fatalf("bindings = %d, want 33", len(bindings))
+	if len(bindings) != 34 {
+		t.Fatalf("bindings = %d, want 34", len(bindings))
 	}
 	for _, binding := range bindings {
 		if !strings.Contains(plain, binding.Description) {

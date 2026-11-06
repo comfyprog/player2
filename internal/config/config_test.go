@@ -80,6 +80,7 @@ func TestDefault(t *testing.T) {
 		"quit":          {"q", "ctrl+c"},
 		"help":          {"?"},
 		"switch_pane":   {"tab"},
+		"toggle_zoom":   {"z"},
 		"open":          {"enter"},
 		"parent":        {"backspace"},
 		"up":            {"up", "k"},

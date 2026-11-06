@@ -15,6 +15,7 @@ const (
 	ActionQuit         Action = "quit"
 	ActionHelp         Action = "help"
 	ActionSwitchPane   Action = "switch_pane"
+	ActionToggleZoom   Action = "toggle_zoom"
 	ActionOpen         Action = "open"
 	ActionParent       Action = "parent"
 	ActionUp           Action = "up"
@@ -52,6 +53,7 @@ var actionOrder = []Action{
 	ActionQuit,
 	ActionHelp,
 	ActionSwitchPane,
+	ActionToggleZoom,
 	ActionOpen,
 	ActionParent,
 	ActionUp,
@@ -89,6 +91,7 @@ var actionDescriptions = map[Action]string{
 	ActionQuit:         "Quit",
 	ActionHelp:         "Help",
 	ActionSwitchPane:   "Switch pane",
+	ActionToggleZoom:   "Zoom active pane",
 	ActionOpen:         "Open/play",
 	ActionParent:       "Parent directory",
 	ActionUp:           "Move up",
