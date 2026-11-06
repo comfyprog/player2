@@ -102,10 +102,17 @@ All keys are configurable; these are the defaults.
 | Shuffle | `s` | Toggle shuffle |
 | Repeat | `r` | Cycle off, all, one |
 | Search | `/` | Filter the browser by substring |
+| Toggle tags | `t` | Switch the browser between filenames and tags |
 | Save playlist | `w` | Save the queue as an M3U file |
 | Rescan | `R` | Reload the current directory |
 | Clear queue | `c` | Clear the queue (with confirmation) |
 | Go to playing | `g` | Select the current queue item |
+
+The browser starts in filename mode. Pressing `t` (`toggle_tags` in `[keys]`)
+shows embedded tags instead: track number, title, album, and artist, with long
+rows truncated using `…`. Files without usable tags keep their filename. Tags
+are read lazily with `ffprobe`, so browsing filenames does not probe every file;
+the status line shows `[FILENAME]` or `[TAG]` to indicate the active view.
 
 ## Configuration
 

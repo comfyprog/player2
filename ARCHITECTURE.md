@@ -429,6 +429,12 @@ built-in defaults.
   skipped missing files.
 - Browser CUE-track rows show `NN. Title — Performer` and the sheet duration,
   right-aligned and width-safe.
+- `t` toggles plain audio rows between filenames and embedded tags
+  (`toggle_tags`, configurable): `NN. Title — Album — Artist`, with missing
+  components omitted and a filename fallback. Tag mode probes entries lazily
+  through the shared `ffprobe` cache and concurrency limit; the status line
+  carries a `[FILENAME]`/`[TAG]` indicator. CUE tracks, directories, playlists,
+  and CUE folders keep their existing labels.
 - Invalid CUEs show their error in the status line and never play.
 
 ### Playlist and transport

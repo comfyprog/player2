@@ -178,9 +178,20 @@ func (m *Model) shuffleLabel() string {
 	return "off"
 }
 
+// browserModeIndicator names the file panel's current label source.
+func (m *Model) browserModeIndicator() string {
+	if m.browserShowTags {
+		return "[TAG]"
+	}
+	return "[FILENAME]"
+}
+
 // statusLine lays out the status message and progress bar on one row.
 func (m *Model) statusLine() string {
-	left := "Status: " + m.statusMsg
+	left := "Status: " + m.browserModeIndicator()
+	if m.statusMsg != "" {
+		left += " " + m.statusMsg
+	}
 	rightPlain, rightStyled := m.progress()
 	rightWidth := ansi.StringWidth(rightPlain)
 

@@ -9,6 +9,7 @@ import (
 
 	"player2/internal/config"
 	"player2/internal/library"
+	"player2/internal/meta"
 	"player2/internal/player"
 	"player2/internal/queue"
 )
@@ -99,6 +100,9 @@ type Model struct {
 	browserLoading     bool
 	browserCue         bool
 	browserGen         uint64
+	browserShowTags    bool
+	browserMeta        map[string]meta.Info
+	browserProbing     map[browserProbeKey]struct{}
 
 	// Playlist pane state.
 	playlistSelected int
@@ -157,22 +161,24 @@ var _ tea.Model = (*Model)(nil)
 func New(opts Options) *Model {
 	cfg := opts.Config
 	m := &Model{
-		cfg:        cfg,
-		scanner:    opts.Scanner,
-		player:     opts.Player,
-		store:      opts.Store,
-		prober:     opts.Prober,
-		width:      defaultWidth,
-		height:     defaultHeight,
-		focus:      PaneBrowser,
-		queue:      queue.New(),
-		now:        time.Now,
-		status:     player.Status{State: player.StateStopped, Volume: cfg.Volume},
-		lastVolume: cfg.Volume,
-		statusMsg:  "ready",
-		styles:     NewStyles(cfg.Colors),
-		probing:    make(map[uint64]string),
-		probeSem:   make(chan struct{}, probeConcurrency),
+		cfg:            cfg,
+		scanner:        opts.Scanner,
+		player:         opts.Player,
+		store:          opts.Store,
+		prober:         opts.Prober,
+		width:          defaultWidth,
+		height:         defaultHeight,
+		focus:          PaneBrowser,
+		queue:          queue.New(),
+		now:            time.Now,
+		status:         player.Status{State: player.StateStopped, Volume: cfg.Volume},
+		lastVolume:     cfg.Volume,
+		statusMsg:      "ready",
+		styles:         NewStyles(cfg.Colors),
+		probing:        make(map[uint64]string),
+		browserMeta:    make(map[string]meta.Info),
+		browserProbing: make(map[browserProbeKey]struct{}),
+		probeSem:       make(chan struct{}, probeConcurrency),
 
 		// Restore is asynchronous, so until it succeeds (or the user changes
 		// the queue) exit must not overwrite the persisted queue.
@@ -260,8 +266,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.tick()
 
 	case browserLoadedMsg:
-		m.applyBrowserLoaded(msg)
-		return m, nil
+		return m, m.applyBrowserLoaded(msg)
+
+	case browserMetadataMsg:
+		return m, m.applyBrowserMetadata(msg)
 
 	case browserPlayMsg:
 		return m, m.applyBrowserPlay(msg)

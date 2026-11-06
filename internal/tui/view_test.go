@@ -31,7 +31,7 @@ func TestViewSmoke(t *testing.T) {
 		"player2",
 		"Files:",
 		"Playlist",
-		"Status: ready",
+		"Status: [FILENAME] ready",
 		"░",
 		"? help",
 		"tab pane",
@@ -146,15 +146,15 @@ func TestViewHelpShowsAllBindingsAtNormalSize(t *testing.T) {
 
 	plain := ansi.Strip(m.View().Content)
 	bindings := m.keys.Bindings()
-	if len(bindings) != 32 {
-		t.Fatalf("bindings = %d, want 32", len(bindings))
+	if len(bindings) != 33 {
+		t.Fatalf("bindings = %d, want 33", len(bindings))
 	}
 	for _, binding := range bindings {
 		if !strings.Contains(plain, binding.Description) {
 			t.Errorf("help overlay missing action %q (%s)", binding.Action, binding.Description)
 		}
 	}
-	if !strings.Contains(plain, "Keys 1-16/16") {
+	if !strings.Contains(plain, "Keys 1-17/17") {
 		t.Errorf("help title lacks full-range indicator: %q", firstLine(plain))
 	}
 }
@@ -179,7 +179,7 @@ func TestViewHelpScrollsToLastBindingAtMinimumSize(t *testing.T) {
 	if !strings.Contains(plain, "Go to playing") {
 		t.Errorf("last binding unreachable after scrolling: %q", plain)
 	}
-	if !strings.Contains(plain, "Keys 11-16/16") {
+	if !strings.Contains(plain, "Keys 12-17/17") {
 		t.Errorf("help title does not show the scrolled position: %q", firstLine(plain))
 	}
 	for i, line := range strings.Split(m.View().Content, "\n") {

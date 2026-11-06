@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"player2/internal/library"
+	"player2/internal/meta"
 	"player2/internal/playlist"
 	"player2/internal/queue"
 )
@@ -44,6 +45,20 @@ type browserAddMsg struct {
 	items  []queue.Item
 	status string
 	err    error
+}
+
+// browserMetadataMsg carries probed tags for one browser entry.
+type browserMetadataMsg struct {
+	gen  uint64
+	path string
+	info meta.Info
+	err  error
+}
+
+// browserProbeKey identifies one in-flight probe for one listing generation.
+type browserProbeKey struct {
+	gen  uint64
+	path string
 }
 
 // browserTitle renders the browser breadcrumb, including any active filter.
@@ -135,20 +150,21 @@ func (m *Model) browserLines(width, height int) []string {
 		}
 		entry := visible[index]
 		style := m.browserEntryStyle(entry.Kind, index == selected)
-		lines[row+1] = style.Render(browserRow(entry, width))
+		lines[row+1] = style.Render(m.browserRow(entry, width))
 	}
 	return lines
 }
 
 // browserRow formats one browser row. CUE tracks show their duration
 // right-aligned, matching the playlist and the CUE acceptance criteria; other
-// entries remain name-only. The result is exactly width cells.
-func browserRow(entry library.Entry, width int) string {
+// entries show their filename or, in tag mode, their embedded metadata. The
+// result is exactly width cells.
+func (m *Model) browserRow(entry library.Entry, width int) string {
 	if width <= 0 {
 		return ""
 	}
 	if entry.Kind != library.KindCueTrack {
-		return fitPlain(entry.Name, width)
+		return fitPlain(m.browserEntryLabel(entry), width)
 	}
 
 	right := "--:--"
@@ -165,6 +181,116 @@ func browserRow(entry library.Entry, width int) string {
 		return strings.Repeat(" ", width-rightWidth) + right
 	}
 	return fitPlain(entry.Name, leftWidth) + " " + right
+}
+
+// browserEntryLabel returns the text shown for one entry. Tag mode applies to
+// plain audio files only; directories, playlists, CUE folders, and CUE tracks
+// keep their existing labels.
+func (m *Model) browserEntryLabel(entry library.Entry) string {
+	if !m.browserShowTags || entry.Kind != library.KindAudio {
+		return entry.Name
+	}
+	info, ok := m.browserMeta[entry.Path]
+	if !ok {
+		return entry.Name
+	}
+	if label := tagLabel(info, entry.Path); label != "" {
+		return label
+	}
+	return entry.Name
+}
+
+// tagLabel formats embedded metadata as track number, title, album, and artist.
+// Missing components are omitted. Files with no usable tags return an empty
+// string so callers can fall back to the filename.
+func tagLabel(info meta.Info, path string) string {
+	title := strings.TrimSpace(info.Title)
+	album := strings.TrimSpace(info.Album)
+	artist := strings.TrimSpace(info.Artist)
+	if title == "" && album == "" && artist == "" && info.TrackNo == 0 {
+		return ""
+	}
+	if title == "" {
+		base := filepath.Base(path)
+		title = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+
+	label := title
+	if info.TrackNo > 0 {
+		label = fmt.Sprintf("%02d. %s", info.TrackNo, title)
+	}
+	if album != "" {
+		label += " — " + album
+	}
+	if artist != "" {
+		label += " — " + artist
+	}
+	return label
+}
+
+// toggleBrowserTags switches the file panel between filenames and tags. Tag
+// data is probed lazily the first time the mode is enabled.
+func (m *Model) toggleBrowserTags() tea.Cmd {
+	m.browserShowTags = !m.browserShowTags
+	if !m.browserShowTags {
+		m.setStatusOK("filenames shown")
+		return nil
+	}
+	m.setStatusOK("tags shown")
+	return m.probeBrowserEntries()
+}
+
+// probeBrowserEntries starts asynchronous tag probes for the plain audio files
+// in the current listing. CUE tracks already carry sheet metadata, and other
+// entry kinds are not audio. Probes are deduplicated per listing generation so
+// rapidly toggling the view cannot run the same probe twice.
+func (m *Model) probeBrowserEntries() tea.Cmd {
+	if !m.browserShowTags || m.prober == nil {
+		return nil
+	}
+	if m.browserMeta == nil {
+		m.browserMeta = make(map[string]meta.Info)
+	}
+	if m.browserProbing == nil {
+		m.browserProbing = make(map[browserProbeKey]struct{})
+	}
+	if m.probeSem == nil {
+		m.probeSem = make(chan struct{}, probeConcurrency)
+	}
+
+	var cmds []tea.Cmd
+	for _, entry := range m.browserEntries {
+		if entry.Kind != library.KindAudio || entry.Path == "" {
+			continue
+		}
+		key := browserProbeKey{gen: m.browserGen, path: entry.Path}
+		if _, inFlight := m.browserProbing[key]; inFlight {
+			continue
+		}
+		m.browserProbing[key] = struct{}{}
+		gen, path, prober, sem := m.browserGen, entry.Path, m.prober, m.probeSem
+		cmds = append(cmds, func() tea.Msg {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			info, err := prober.Probe(context.Background(), path)
+			return browserMetadataMsg{gen: gen, path: path, info: info, err: err}
+		})
+	}
+	return tea.Batch(cmds...)
+}
+
+// applyBrowserMetadata installs successful probe results for the current
+// listing. Stale generations are ignored; failures leave the filename visible.
+func (m *Model) applyBrowserMetadata(msg browserMetadataMsg) tea.Cmd {
+	delete(m.browserProbing, browserProbeKey{gen: msg.gen, path: msg.path})
+	if msg.gen != m.browserGen || msg.err != nil {
+		return nil
+	}
+	if m.browserMeta == nil {
+		m.browserMeta = make(map[string]meta.Info)
+	}
+	m.browserMeta[msg.path] = msg.info
+	return nil
 }
 
 // browserEntryStyle chooses the visual role for one entry, with selection
@@ -198,7 +324,11 @@ func (m *Model) browserVisibleEntries() []library.Entry {
 	needle := strings.ToLower(m.browserFilter)
 	visible := make([]library.Entry, 0, len(m.browserEntries))
 	for _, entry := range m.browserEntries {
-		if strings.Contains(strings.ToLower(entry.Name), needle) {
+		matches := strings.Contains(strings.ToLower(entry.Name), needle)
+		if !matches && m.browserShowTags {
+			matches = strings.Contains(strings.ToLower(m.browserEntryLabel(entry)), needle)
+		}
+		if matches {
 			visible = append(visible, entry)
 		}
 	}
@@ -303,6 +433,7 @@ func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus s
 	m.browserOffset = offset
 	m.browserLoading = true
 	m.browserGen++
+	m.browserProbing = make(map[browserProbeKey]struct{})
 	gen := m.browserGen
 
 	scanner := m.scanner
@@ -337,10 +468,11 @@ func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus s
 	}
 }
 
-// applyBrowserLoaded installs a directory listing, ignoring stale results.
-func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) {
+// applyBrowserLoaded installs a directory listing, ignoring stale results. In
+// tag mode it also starts probing the new listing.
+func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) tea.Cmd {
 	if msg.gen != m.browserGen {
-		return
+		return nil
 	}
 	m.browserLoading = false
 
@@ -354,7 +486,7 @@ func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) {
 			m.browserEntriesPath = ""
 		}
 		m.clampBrowser()
-		return
+		return nil
 	}
 
 	m.browserEntries = msg.entries
@@ -375,6 +507,7 @@ func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) {
 	if m.statusIsError {
 		m.setStatusOK("ready")
 	}
+	return m.probeBrowserEntries()
 }
 
 // clearBrowserFilter removes the active filter and search input. Navigation
@@ -716,6 +849,8 @@ func (m *Model) handleBrowserAction(action Action) tea.Cmd {
 	case ActionSearch:
 		m.browserSearching = true
 		m.browserSearch = m.browserFilter
+	case ActionToggleTags:
+		return m.toggleBrowserTags()
 	case ActionRescan:
 		return m.rescanBrowser()
 	}

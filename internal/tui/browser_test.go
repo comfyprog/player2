@@ -342,6 +342,199 @@ func TestBrowserCueRowsShowDurationsAtSmallAndLargeSizes(t *testing.T) {
 	}
 }
 
+func TestBrowserTagRowsShowTrackTitleAlbumAndArtist(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserShowTags = true
+	entries := []library.Entry{
+		audioEntry("track01.mp3", "/music/track01.mp3"),
+		audioEntry("track02.mp3", "/music/track02.mp3"),
+		audioEntry("track03.mp3", "/music/track03.mp3"),
+		audioEntry("track04.mp3", "/music/track04.mp3"),
+	}
+	m.browserEntries = entries
+	m.browserMeta = map[string]meta.Info{
+		entries[0].Path: {TrackNo: 1, Title: "Opening", Album: "Record", Artist: "Band"},
+		entries[1].Path: {TrackNo: 2, Title: "Interlude"},
+		entries[2].Path: {},
+		entries[3].Path: {Artist: "Guest"},
+	}
+
+	lines := m.browserLines(80, len(entries)+1)
+	wants := []string{
+		"01. Opening — Record — Band",
+		"02. Interlude",
+		"track03.mp3",
+		"track04 — Guest",
+	}
+	for i, want := range wants {
+		got := strings.TrimRight(ansi.Strip(lines[i+1]), " ")
+		if got != want {
+			t.Errorf("tag row %d = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestBrowserTagRowsTruncateWithEllipsis(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserShowTags = true
+	entry := audioEntry("track01.mp3", "/music/track01.mp3")
+	m.browserEntries = []library.Entry{entry}
+	m.browserMeta = map[string]meta.Info{
+		entry.Path: {TrackNo: 1, Title: "A very long title", Album: "A very long album", Artist: "A very long artist"},
+	}
+
+	line := strings.TrimRight(ansi.Strip(m.browserLines(20, 2)[1]), " ")
+	if width := ansi.StringWidth(line); width != 20 {
+		t.Errorf("tag row width = %d, want 20", width)
+	}
+	if !strings.HasSuffix(line, "…") {
+		t.Errorf("truncated tag row = %q, want ellipsis", line)
+	}
+}
+
+func TestBrowserToggleTagsSwitchesLabelsAndStatusIndicator(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	entry := audioEntry("track01.mp3", "/music/track01.mp3")
+	m.browserEntries = []library.Entry{entry}
+	m.browserMeta = map[string]meta.Info{
+		entry.Path: {TrackNo: 1, Title: "Opening", Album: "Record", Artist: "Band"},
+	}
+
+	if plain := ansi.Strip(m.statusLine()); !strings.Contains(plain, "[FILENAME]") {
+		t.Fatalf("default status line = %q, want [FILENAME]", plain)
+	}
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "track01.mp3" {
+		t.Fatalf("default row = %q, want filename", row)
+	}
+
+	m, _ = pressForCmd(t, m, runeKey('t'))
+	if !m.browserShowTags {
+		t.Fatal("browserShowTags = false after t")
+	}
+	if plain := ansi.Strip(m.statusLine()); !strings.Contains(plain, "[TAG]") {
+		t.Errorf("tag status line = %q, want [TAG]", plain)
+	}
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "01. Opening — Record — Band" {
+		t.Errorf("tag row = %q, want tags", row)
+	}
+
+	m, _ = pressForCmd(t, m, runeKey('t'))
+	if m.browserShowTags {
+		t.Fatal("browserShowTags = true after second t")
+	}
+	if plain := ansi.Strip(m.statusLine()); !strings.Contains(plain, "[FILENAME]") {
+		t.Errorf("restored status line = %q, want [FILENAME]", plain)
+	}
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "track01.mp3" {
+		t.Errorf("restored row = %q, want filename", row)
+	}
+}
+
+func TestBrowserToggleTagsProbesPlainAudioOnly(t *testing.T) {
+	prober := &fakeProber{info: map[string]meta.Info{
+		"/music/a.mp3": {TrackNo: 4, Title: "Tagged", Album: "Record", Artist: "Band"},
+	}}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = &testScanner{}
+		opts.Prober = prober
+		opts.StartDir = "/music"
+	})
+	m = resize(t, m, 100, 30)
+	m.browserEntries = []library.Entry{
+		audioEntry("a.mp3", "/music/a.mp3"),
+		{Kind: library.KindDir, Name: "Sub", Path: "/music/Sub"},
+		{Kind: library.KindPlaylist, Name: "list.m3u", Path: "/music/list.m3u"},
+		cueTrackEntry("One", "/music/album.flac", "/music/Album.cue", 1, 0, time.Minute),
+		{Kind: library.KindInvalidCue, Name: "Bad.cue", Path: "/music/Bad.cue", Err: errors.New("bad")},
+	}
+
+	m, cmd := pressForCmd(t, m, runeKey('t'))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if got := prober.callCount(); got != 1 {
+		t.Fatalf("probe calls = %d, want 1", got)
+	}
+	if got := prober.calls[0]; got != "/music/a.mp3" {
+		t.Errorf("probed %q, want /music/a.mp3", got)
+	}
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "04. Tagged — Record — Band" {
+		t.Errorf("tag row after probe = %q", row)
+	}
+}
+
+func TestBrowserLoadProbesTagsOnlyWhenEnabled(t *testing.T) {
+	prober := &fakeProber{}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = &testScanner{}
+		opts.Prober = prober
+		opts.StartDir = "/music"
+	})
+	m = resize(t, m, 100, 30)
+	entries := []library.Entry{audioEntry("a.mp3", "/music/a.mp3")}
+
+	next, cmd := m.Update(browserLoadedMsg{gen: m.browserGen, path: "/music", entries: entries})
+	m = next.(*Model)
+	if cmd != nil {
+		t.Fatalf("filename-mode load returned command %T, want nil", cmd)
+	}
+	if got := prober.callCount(); got != 0 {
+		t.Fatalf("probe calls in filename mode = %d, want 0", got)
+	}
+
+	m.browserShowTags = true
+	next, cmd = m.Update(browserLoadedMsg{gen: m.browserGen, path: "/music", entries: entries})
+	m = next.(*Model)
+	if cmd == nil {
+		t.Fatal("tag-mode load returned no probe command")
+	}
+	m = applyBrowserCmd(t, m, cmd)
+	if got := prober.callCount(); got != 1 {
+		t.Errorf("probe calls in tag mode = %d, want 1", got)
+	}
+}
+
+func TestBrowserTagProbeDeduplicatesWhileInFlight(t *testing.T) {
+	prober := &fakeProber{}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = &testScanner{}
+		opts.Prober = prober
+		opts.StartDir = "/music"
+	})
+	m.browserEntries = []library.Entry{audioEntry("a.mp3", "/music/a.mp3")}
+
+	m, cmd := pressForCmd(t, m, runeKey('t'))
+	if cmd == nil {
+		t.Fatal("first tag toggle returned no probe command")
+	}
+	m, _ = pressForCmd(t, m, runeKey('t'))
+	m, again := pressForCmd(t, m, runeKey('t'))
+	if again != nil {
+		t.Fatalf("re-enabled tag mode scheduled a duplicate probe: %T", again)
+	}
+	m = applyBrowserCmd(t, m, cmd)
+	if got := prober.callCount(); got != 1 {
+		t.Errorf("probe calls = %d, want 1", got)
+	}
+}
+
+func TestBrowserIgnoresStaleTagProbeResults(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	entry := audioEntry("a.mp3", "/music/a.mp3")
+	m.browserEntries = []library.Entry{entry}
+	m.browserShowTags = true
+	m.browserGen = 3
+
+	next, _ := m.Update(browserMetadataMsg{
+		gen:  2,
+		path: entry.Path,
+		info: meta.Info{TrackNo: 1, Title: "Stale", Album: "Old", Artist: "Band"},
+	})
+	m = next.(*Model)
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "a.mp3" {
+		t.Errorf("stale probe changed row to %q", row)
+	}
+}
+
 func TestBrowserEnterInvalidCueShowsErrorAndDoesNotPlay(t *testing.T) {
 	sc := &testScanner{}
 	m, fp := newBrowserModel(t, sc)
@@ -588,6 +781,34 @@ func TestBrowserFilterSearchMode(t *testing.T) {
 	}
 	if got := len(m.browserVisibleEntries()); got != 4 {
 		t.Errorf("visible entries after Esc = %d, want 4", got)
+	}
+}
+
+func TestBrowserFilterMatchesTagsInTagMode(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	amber := audioEntry("a.mp3", "/music/a.mp3")
+	blue := audioEntry("b.mp3", "/music/b.mp3")
+	m.browserEntries = []library.Entry{amber, blue}
+	m.browserMeta = map[string]meta.Info{
+		amber.Path: {Title: "Amber", Album: "Record", Artist: "Band"},
+		blue.Path:  {Title: "Blue", Album: "Record", Artist: "Band"},
+	}
+
+	m.browserFilter = "amber"
+	if got := len(m.browserVisibleEntries()); got != 0 {
+		t.Fatalf("filename-mode matches for amber = %d, want 0", got)
+	}
+
+	m.browserShowTags = true
+	visible := m.browserVisibleEntries()
+	if len(visible) != 1 || visible[0].Path != amber.Path {
+		t.Fatalf("tag-mode matches for amber = %#v, want a.mp3", visible)
+	}
+
+	m.browserFilter = "b.mp3"
+	visible = m.browserVisibleEntries()
+	if len(visible) != 1 || visible[0].Path != blue.Path {
+		t.Errorf("tag-mode filename matches = %#v, want b.mp3", visible)
 	}
 }
 

@@ -105,6 +105,7 @@ func TestDefault(t *testing.T) {
 		"shuffle":       {"s"},
 		"repeat":        {"r"},
 		"search":        {"/"},
+		"toggle_tags":   {"t"},
 		"save_playlist": {"w"},
 		"rescan":        {"R"},
 		"clear":         {"c"},

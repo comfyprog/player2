@@ -40,6 +40,7 @@ const (
 	ActionShuffle      Action = "shuffle"
 	ActionRepeat       Action = "repeat"
 	ActionSearch       Action = "search"
+	ActionToggleTags   Action = "toggle_tags"
 	ActionSavePlaylist Action = "save_playlist"
 	ActionRescan       Action = "rescan"
 	ActionClear        Action = "clear"
@@ -76,6 +77,7 @@ var actionOrder = []Action{
 	ActionShuffle,
 	ActionRepeat,
 	ActionSearch,
+	ActionToggleTags,
 	ActionSavePlaylist,
 	ActionRescan,
 	ActionClear,
@@ -112,6 +114,7 @@ var actionDescriptions = map[Action]string{
 	ActionShuffle:      "Shuffle",
 	ActionRepeat:       "Repeat",
 	ActionSearch:       "Search",
+	ActionToggleTags:   "Toggle tags",
 	ActionSavePlaylist: "Save playlist",
 	ActionRescan:       "Rescan",
 	ActionClear:        "Clear queue",
