@@ -104,6 +104,7 @@ All keys are configurable; these are the defaults.
 | Repeat | `r` | Cycle off, all, one |
 | Search | `/` | Filter the browser by substring |
 | Toggle tags | `t` | Switch the browser between filenames and tags |
+| Track info | `i` | Show details for the highlighted audio file |
 | Save playlist | `w` | Save the queue as an M3U file |
 | Rescan | `R` | Reload the current directory |
 | Clear queue | `c` | Clear the queue (with confirmation) |
@@ -114,6 +115,12 @@ shows embedded tags instead: track number, title, album, and artist, with long
 rows truncated using `…`. Files without usable tags keep their filename. Tags
 are read lazily with `ffprobe`, so browsing filenames does not probe every file;
 the status line shows `[FILENAME]` or `[TAG]` to indicate the active view.
+
+Pressing `i` (`info` in `[keys]`) opens a read-only window for the highlighted
+plain audio file in either pane. It shows the filename, full path, duration,
+container and codec details, and embedded tags. Long content scrolls with the
+arrow, page, Home, and End keys; Esc or `i` closes it. CUE tracks are not
+included yet.
 
 Pressing `z` (`toggle_zoom` in `[keys]`) hides the inactive pane and shows the
 focused one at full width. Pressing `z` again restores both panes. `Tab` also

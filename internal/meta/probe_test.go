@@ -82,15 +82,28 @@ func TestParseProbeOutput(t *testing.T) {
 			name:    "case-insensitive tags, track range, format duration",
 			fixture: "tagged.json",
 			want: Info{
-				Title:       "Song Title",
-				Artist:      "The Artist",
-				Album:       "The Album",
-				AlbumArtist: "Album Artist",
-				TrackNo:     3,
-				Duration:    12345 * time.Millisecond,
-				Codec:       "flac",
-				SampleRate:  44100,
-				Channels:    2,
+				Title:         "Song Title",
+				Artist:        "The Artist",
+				Album:         "The Album",
+				AlbumArtist:   "Album Artist",
+				TrackNo:       3,
+				Duration:      12345 * time.Millisecond,
+				Codec:         "flac",
+				Container:     "FLAC (Free Lossless Audio Codec)",
+				BitRate:       1411200,
+				SampleRate:    44100,
+				Channels:      2,
+				BitDepth:      16,
+				ChannelLayout: "stereo",
+				Tags: map[string]string{
+					"album":        "The Album",
+					"album_artist": "Album Artist",
+					"artist":       "The Artist",
+					"encoder":      "reference libFLAC",
+					"title":        "Song Title",
+					"track":        "3/12",
+					"unknown_tag":  "ignored",
+				},
 			},
 		},
 		{
@@ -106,6 +119,45 @@ func TestParseProbeOutput(t *testing.T) {
 				Codec:       "mp3",
 				SampleRate:  48000,
 				Channels:    1,
+				Tags: map[string]string{
+					"album":       "B",
+					"albumartist": "C",
+					"artist":      "A",
+					"title":       "Fallback",
+					"track":       "7",
+				},
+			},
+		},
+		{
+			name:    "empty format tag does not hide stream tag",
+			fixture: "empty_tag.json",
+			want: Info{
+				Title:      "Stream Title",
+				Artist:     "Stream Artist",
+				Album:      "Album",
+				Duration:   time.Second,
+				Codec:      "flac",
+				Container:  "flac",
+				SampleRate: 44100,
+				Channels:   2,
+				Tags: map[string]string{
+					"album":  "Album",
+					"artist": "Stream Artist",
+					"title":  "Stream Title",
+				},
+			},
+		},
+		{
+			name:    "numeric bit depth and format bitrate fallback",
+			fixture: "bitrate_fallback.json",
+			want: Info{
+				Duration:   time.Second,
+				Codec:      "mp3",
+				Container:  "mp3",
+				BitRate:    192000,
+				SampleRate: 44100,
+				Channels:   2,
+				BitDepth:   16,
 			},
 		},
 		{
@@ -116,6 +168,9 @@ func TestParseProbeOutput(t *testing.T) {
 				Codec:      "pcm_s16le",
 				SampleRate: 44100,
 				Channels:   2,
+				Tags: map[string]string{
+					"title": "No Duration",
+				},
 			},
 		},
 		{
@@ -124,6 +179,10 @@ func TestParseProbeOutput(t *testing.T) {
 			want: Info{
 				Title: "Bad Tags",
 				Codec: "flac",
+				Tags: map[string]string{
+					"title": "Bad Tags",
+					"track": "abc/12",
+				},
 			},
 		},
 		{
@@ -153,7 +212,7 @@ func TestParseProbeOutput(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseProbeOutput() error = %v", err)
 			}
-			if got != tt.want {
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseProbeOutput() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -253,7 +312,7 @@ func TestProbeCacheKeyedByPathSizeAndModTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cached Probe() error = %v", err)
 	}
-	if second != first {
+	if !reflect.DeepEqual(second, first) {
 		t.Errorf("cached Probe() = %+v, want same values as %+v", second, first)
 	}
 	if count := probeCount(t, dir); count != 1 {

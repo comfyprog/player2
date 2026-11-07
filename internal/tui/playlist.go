@@ -541,6 +541,8 @@ func (m *Model) handlePlaylistAction(action Action) tea.Cmd {
 		return m.playlistMove(1)
 	case ActionClear:
 		return m.requestClear()
+	case ActionInfo:
+		return m.openPlaylistInfo()
 	case ActionGotoPlaying:
 		m.selectCurrent()
 	case ActionUp:

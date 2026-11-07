@@ -66,7 +66,7 @@ ReplayGain, scrobbling, mouse support, remote control, and Windows/macOS.
 | `internal/xdg` | XDG path resolution | stdlib |
 | `internal/config` | defaults, TOML, key-action vocabulary | xdg (indirectly via loader) |
 | `internal/cue` | CUE parsing/validation/path resolution | stdlib, x/text |
-| `internal/meta` | `ffprobe` invocation, tag/duration parsing, cache | stdlib |
+| `internal/meta` | `ffprobe` invocation, tag/codec/duration parsing, cache | stdlib |
 | `internal/library` | directory listings, CUE virtual folders, `Walk` | cue, meta |
 | `internal/queue` | queue model, IDs, shuffle/repeat, snapshots | stdlib |
 | `internal/playlist` | M3U read/write, CUE extension | queue, cue |
@@ -465,6 +465,14 @@ built-in defaults.
 
 - `?` opens a two-column help overlay built from the configured keymap, with
   scrolling when the full map does not fit; Esc closes it. The overlay is modal.
+- `i` opens a read-only track-info window for the highlighted plain audio file
+  (a browser `KindAudio` entry or a queue item without `CuePath`; CUE tracks are
+  not supported yet). It shows the filename, absolute path, duration,
+  container/codec, bitrate, sample rate, channels, bit depth, and every
+  `ffprobe` tag. The window opens immediately with a loading line and fills from
+  an asynchronous probe through the shared `ffprobe` cache; stale results are
+  discarded. Up/Down/PgUp/PgDn/Home/End scroll, Esc or `i` closes, and
+  `q`/Ctrl+C quit.
 - `w` opens a text-input save prompt (Bubbles v2 `textinput`). The default
   `playlist.m3u` is a placeholder so typing replaces it; empty submit uses the
   default. Relative paths resolve against the browser directory (the CUE file's

@@ -1,0 +1,23 @@
+{
+  "streams": [
+    {
+      "codec_name": "flac",
+      "codec_type": "audio",
+      "sample_rate": "44100",
+      "channels": 2,
+      "tags": {
+        "TITLE": "Stream Title",
+        "ARTIST": "Stream Artist"
+      }
+    }
+  ],
+  "format": {
+    "format_name": "flac",
+    "duration": "1.000000",
+    "tags": {
+      "TITLE": "",
+      "ARTIST": "   ",
+      "ALBUM": "Album"
+    }
+  }
+}

@@ -26,13 +26,18 @@ import (
 // defaultTimeout bounds a single ffprobe invocation.
 const defaultTimeout = 5 * time.Second
 
-// Info is the metadata relevant to browsing and playing a file.
+// Info is the metadata relevant to browsing, playing, and describing a file.
+// Tags holds every non-empty string tag reported by ffprobe, keyed by
+// lowercased tag name. Callers must treat Tags as read-only.
 type Info struct {
 	Title, Artist, Album, AlbumArtist string
 	TrackNo                           int
 	Duration                          time.Duration
-	Codec                             string
-	SampleRate, Channels              int
+	Codec, Container                  string
+	BitRate                           int64
+	SampleRate, Channels, BitDepth    int
+	ChannelLayout                     string
+	Tags                              map[string]string
 }
 
 // Prober reports metadata for a local audio file.
@@ -223,16 +228,47 @@ type probeOutput struct {
 }
 
 type probeFormat struct {
-	Duration string         `json:"duration"`
-	Tags     map[string]any `json:"tags"`
+	Duration       string         `json:"duration"`
+	FormatName     string         `json:"format_name"`
+	FormatLongName string         `json:"format_long_name"`
+	BitRate        probeNumber    `json:"bit_rate"`
+	Tags           map[string]any `json:"tags"`
 }
 
 type probeStream struct {
-	CodecName  string `json:"codec_name"`
-	CodecType  string `json:"codec_type"`
-	SampleRate string `json:"sample_rate"`
-	Channels   int    `json:"channels"`
-	Duration   string `json:"duration"`
+	CodecName        string         `json:"codec_name"`
+	CodecType        string         `json:"codec_type"`
+	SampleRate       string         `json:"sample_rate"`
+	Channels         int            `json:"channels"`
+	ChannelLayout    string         `json:"channel_layout"`
+	Duration         string         `json:"duration"`
+	BitRate          probeNumber    `json:"bit_rate"`
+	BitsPerSample    probeNumber    `json:"bits_per_sample"`
+	BitsPerRawSample probeNumber    `json:"bits_per_raw_sample"`
+	Tags             map[string]any `json:"tags"`
+}
+
+// probeNumber accepts either a JSON number or a JSON string. ffprobe uses
+// both representations for numeric fields across formats and versions.
+type probeNumber string
+
+// UnmarshalJSON decodes a JSON number or string into probeNumber. Null and
+// empty values become the empty string.
+func (n *probeNumber) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*n = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*n = probeNumber(value)
+		return nil
+	}
+	*n = probeNumber(string(data))
+	return nil
 }
 
 // parseProbeOutput converts ffprobe JSON into Info.
@@ -253,19 +289,48 @@ func parseProbeOutput(data []byte) (Info, error) {
 		return Info{}, errors.New("no audio stream found")
 	}
 
-	tags := normalizeTags(out.Format.Tags)
+	// Merge stream and format tags. Format tags are the tag source the rest of
+	// the application has always used, so they take precedence; stream tags
+	// fill in fields the container does not expose.
+	tags := normalizeTags(audio.Tags)
+	for name, value := range normalizeTags(out.Format.Tags) {
+		tags[name] = value
+	}
+
+	container := strings.TrimSpace(out.Format.FormatLongName)
+	if container == "" {
+		container = strings.TrimSpace(out.Format.FormatName)
+	}
+
+	bitRate := parsePositiveInt64(string(audio.BitRate))
+	if bitRate == 0 {
+		bitRate = parsePositiveInt64(string(out.Format.BitRate))
+	}
+
+	bitDepth := parsePositiveInt(string(audio.BitsPerSample))
+	if bitDepth == 0 {
+		bitDepth = parsePositiveInt(string(audio.BitsPerRawSample))
+	}
+
 	info := Info{
-		Title:       firstTag(tags, "title"),
-		Artist:      firstTag(tags, "artist"),
-		Album:       firstTag(tags, "album"),
-		AlbumArtist: firstTag(tags, "album_artist", "albumartist"),
-		TrackNo:     parseTrack(firstTag(tags, "track")),
-		Codec:       audio.CodecName,
-		SampleRate:  parsePositiveInt(audio.SampleRate),
-		Channels:    audio.Channels,
+		Title:         firstTag(tags, "title"),
+		Artist:        firstTag(tags, "artist"),
+		Album:         firstTag(tags, "album"),
+		AlbumArtist:   firstTag(tags, "album_artist", "albumartist"),
+		TrackNo:       parseTrack(firstTag(tags, "track")),
+		Codec:         audio.CodecName,
+		Container:     container,
+		BitRate:       bitRate,
+		SampleRate:    parsePositiveInt(audio.SampleRate),
+		Channels:      audio.Channels,
+		BitDepth:      bitDepth,
+		ChannelLayout: strings.TrimSpace(audio.ChannelLayout),
 	}
 	if info.Channels < 0 {
 		info.Channels = 0
+	}
+	if len(tags) > 0 {
+		info.Tags = tags
 	}
 
 	// Prefer the container duration, falling back to the first audio stream
@@ -296,13 +361,14 @@ func normalizeTags(tags map[string]any) map[string]string {
 			continue
 		}
 		name := strings.ToLower(strings.TrimSpace(key))
-		if name == "" {
+		value = strings.TrimSpace(value)
+		if name == "" || value == "" {
 			continue
 		}
 		if _, exists := normalized[name]; exists {
 			continue
 		}
-		normalized[name] = strings.TrimSpace(value)
+		normalized[name] = value
 	}
 	return normalized
 }
@@ -335,6 +401,16 @@ func parseTrack(value string) int {
 // malformed values.
 func parsePositiveInt(value string) int {
 	number, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || number < 0 {
+		return 0
+	}
+	return number
+}
+
+// parsePositiveInt64 parses a non-negative 64-bit integer string, returning
+// zero for malformed values. Bitrates routinely exceed 32-bit sizes.
+func parsePositiveInt64(value string) int64 {
+	number, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil || number < 0 {
 		return 0
 	}

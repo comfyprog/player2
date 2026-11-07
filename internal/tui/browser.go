@@ -851,6 +851,8 @@ func (m *Model) handleBrowserAction(action Action) tea.Cmd {
 		m.browserSearch = m.browserFilter
 	case ActionToggleTags:
 		return m.toggleBrowserTags()
+	case ActionInfo:
+		return m.openBrowserInfo()
 	case ActionRescan:
 		return m.rescanBrowser()
 	}

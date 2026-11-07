@@ -6,10 +6,21 @@
       "codec_type": "audio",
       "sample_rate": "44100",
       "channels": 2,
-      "duration": "12.300000"
+      "channel_layout": "stereo",
+      "bits_per_raw_sample": "16",
+      "bit_rate": "1411200",
+      "duration": "12.300000",
+      "tags": {
+        "TITLE": "Stream Title",
+        "Artist": "Stream Artist",
+        "ENCODER": "reference libFLAC"
+      }
     }
   ],
   "format": {
+    "format_name": "flac",
+    "format_long_name": "FLAC (Free Lossless Audio Codec)",
+    "bit_rate": "1400000",
     "duration": "12.345000",
     "tags": {
       "TITLE": "Song Title",

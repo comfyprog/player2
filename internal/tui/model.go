@@ -71,6 +71,11 @@ type Model struct {
 	// capturing keys.
 	prompt promptState
 
+	// info is the read-only track-info modal. infoSeq invalidates a probe
+	// result whose window has since been closed or reopened.
+	info    infoState
+	infoSeq uint64
+
 	// helpOffset is the first help binding row shown while the overlay is
 	// open. It lets the full keymap be reached on short terminals.
 	helpOffset int
@@ -260,6 +265,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.help {
 			m.clampHelpOffset()
 		}
+		if m.infoOpen() {
+			m.clampInfoOffset()
+		}
 		return m, nil
 
 	case tickMsg:
@@ -299,6 +307,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case playlistSavedMsg:
 		m.applyPlaylistSaved(msg)
 		return m, nil
+
+	case trackInfoMsg:
+		return m, m.applyTrackInfo(msg)
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -360,6 +371,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// and pane actions.
 	if m.promptOpen() {
 		return m.handlePromptKey(msg)
+	}
+
+	// The info window is modal: it captures scrolling and closing before help,
+	// search, pane, and transport actions.
+	if m.infoOpen() {
+		return m.handleInfoKey(key)
 	}
 
 	// The help overlay is modal: it swallows pane/transport actions while it

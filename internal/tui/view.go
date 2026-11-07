@@ -48,6 +48,8 @@ func (m *Model) render() string {
 	switch {
 	case m.promptOpen():
 		lines = append(lines, m.promptLines(bodyHeight)...)
+	case m.infoOpen():
+		lines = append(lines, m.infoLines(bodyHeight)...)
 	case m.help:
 		lines = append(lines, m.helpLines(bodyHeight)...)
 	default:
@@ -274,6 +276,7 @@ func (m *Model) hintsLine() string {
 		label  string
 	}{
 		{ActionHelp, "help"},
+		{ActionInfo, "info"},
 		{ActionSwitchPane, "pane"},
 		{ActionOpen, "play"},
 		{ActionAdd, "add"},
