@@ -284,3 +284,8 @@ Manual checks, when a real terminal and audio device are available:
 - Rename a referenced audio file and confirm the CUE becomes invalid instead of
   hiding the remaining file.
 - Quit and confirm no `ffmpeg` process is left running.
+
+## License
+
+player2 is released under the MIT License. See [LICENSE](LICENSE) for the full
+text, including the copyright notice.
