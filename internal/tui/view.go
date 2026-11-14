@@ -178,6 +178,9 @@ func (m *Model) shuffleLabel() string {
 
 // browserModeIndicator names the file panel's current label source.
 func (m *Model) browserModeIndicator() string {
+	if m.browserBookmarks {
+		return "[BOOKMARKS]"
+	}
 	if m.browserShowTags {
 		return "[TAG]"
 	}

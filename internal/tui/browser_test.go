@@ -875,6 +875,24 @@ func TestBrowserFilterSearchMode(t *testing.T) {
 	}
 }
 
+func TestBrowserFilterMatchesNamesNotParentPaths(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserEntries = []library.Entry{
+		audioEntry("Alpha.flac", "/home/alex/Music/Alpha.flac"),
+		audioEntry("Beta.flac", "/home/alex/Music/Beta.flac"),
+	}
+
+	m.browserFilter = "home"
+	if got := len(m.browserVisibleEntries()); got != 0 {
+		t.Errorf("visible entries for parent-path query = %d, want 0", got)
+	}
+
+	m.browserFilter = "alpha"
+	if got := len(m.browserVisibleEntries()); got != 1 {
+		t.Errorf("visible entries for name query = %d, want 1", got)
+	}
+}
+
 func TestBrowserFilterMatchesTagsInTagMode(t *testing.T) {
 	m, _ := newBrowserModel(t, &testScanner{})
 	amber := audioEntry("a.mp3", "/music/a.mp3")

@@ -86,6 +86,8 @@ last = ["end"]                  # jump to last row
 toggle_tags = ["t"]             # filenames vs embedded tags
 info = ["i"]                    # details for the highlighted audio file
 rescan = ["R"]                  # reload the current directory
+add_bookmark = ["f"]            # add the current directory to bookmarks
+show_bookmarks = ["F"]          # show the bookmark list
 
 # Queue
 add = ["a"]                     # add selection to the queue

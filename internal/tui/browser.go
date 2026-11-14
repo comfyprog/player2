@@ -65,7 +65,12 @@ type browserProbeKey struct {
 // browserTitle renders the browser breadcrumb, including any active filter.
 // Paths are home-abbreviated and left-truncated so their tail stays visible.
 func (m *Model) browserTitle(width int) string {
-	const prefix = "Files: "
+	prefix := "Files: "
+	title := abbreviateHome(m.browserPath)
+	if m.browserBookmarks {
+		prefix = ""
+		title = m.bookmarkListTitle()
+	}
 
 	suffix := ""
 	switch {
@@ -79,8 +84,7 @@ func (m *Model) browserTitle(width int) string {
 	if available <= 0 {
 		return truncatePlain(prefix+suffix, width)
 	}
-	path := truncateLeft(abbreviateHome(m.browserPath), available)
-	return truncatePlain(prefix+path+suffix, width)
+	return truncatePlain(prefix+truncateLeft(title, available)+suffix, width)
 }
 
 // browserLines renders the browser pane's title, rows, and empty/loading
@@ -115,8 +119,11 @@ func (m *Model) browserLines(width, height int) []string {
 	visible := m.browserVisibleEntries()
 	if len(visible) == 0 {
 		message := "Empty directory"
-		if m.browserFilter != "" {
+		switch {
+		case m.browserFilter != "":
 			message = "No matches"
+		case m.browserBookmarks:
+			message = "No bookmarks"
 		}
 		lines[1] = m.styles.Dim.Render(fitPlain(message, width))
 		return lines
@@ -163,6 +170,9 @@ func (m *Model) browserLines(width, height int) []string {
 func (m *Model) browserRow(entry library.Entry, width int) string {
 	if width <= 0 {
 		return ""
+	}
+	if m.browserBookmarks {
+		return fitPlain(truncateLeft(entry.Name, width), width)
 	}
 	if entry.Kind != library.KindCueTrack {
 		return fitPlain(m.browserEntryLabel(entry), width)
@@ -319,14 +329,22 @@ func (m *Model) browserEntryStyle(kind library.Kind, selected bool) lipgloss.Sty
 // browserVisibleEntries applies the case-insensitive substring filter without
 // disturbing the scanner's natural sort order.
 func (m *Model) browserVisibleEntries() []library.Entry {
+	entries := m.browserEntries
+	if m.browserBookmarks {
+		entries = m.bookmarkEntries()
+	}
 	if m.browserFilter == "" {
-		return m.browserEntries
+		return entries
 	}
 	needle := strings.ToLower(m.browserFilter)
-	visible := make([]library.Entry, 0, len(m.browserEntries))
-	for _, entry := range m.browserEntries {
+	visible := make([]library.Entry, 0, len(entries))
+	for _, entry := range entries {
 		matches := strings.Contains(strings.ToLower(entry.Name), needle)
-		if !matches && m.browserShowTags {
+		if !matches && m.browserBookmarks &&
+			strings.Contains(strings.ToLower(entry.Path), needle) {
+			matches = true
+		}
+		if !matches && m.browserShowTags && !m.browserBookmarks {
 			matches = strings.Contains(strings.ToLower(m.browserEntryLabel(entry)), needle)
 		}
 		if matches {
@@ -422,6 +440,12 @@ func entryKey(entry library.Entry) string {
 // generation is incremented before the command runs so a stale result can be
 // recognised and ignored.
 func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus string) tea.Cmd {
+	// Loading a directory always leaves the bookmark view. Every current caller
+	// clears it first; enforcing it here keeps a future caller from rendering
+	// directory rows under the bookmark title.
+	m.browserBookmarks = false
+	m.bookmarkReturn = browserLocation{}
+
 	// A new location must not expose entries from the previous one while the
 	// asynchronous read is in flight. Rescans of the same path keep them.
 	if m.browserEntriesPath != path {
@@ -505,7 +529,9 @@ func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) tea.Cmd {
 		}
 	}
 	m.clampBrowser()
-	if m.statusIsError {
+	// A successful directory load clears a directory error, but not a failed
+	// bookmark load: that error is persistent until the file is repaired.
+	if m.statusIsError && m.bookmarkLoadErr == nil {
 		m.setStatusOK("ready")
 	}
 	return m.probeBrowserEntries()
@@ -578,6 +604,9 @@ func (m *Model) browserOpen() tea.Cmd {
 	entry, ok := m.browserSelectedEntry()
 	if !ok {
 		return nil
+	}
+	if m.browserBookmarks {
+		return m.openBookmark(entry.Path)
 	}
 
 	switch entry.Kind {
@@ -841,12 +870,28 @@ func (m *Model) applyBrowserAdd(msg browserAddMsg) tea.Cmd {
 
 // handleBrowserAction dispatches pane actions while the browser is focused.
 func (m *Model) handleBrowserAction(action Action) tea.Cmd {
+	// The bookmark list only supports navigation, filtering, opening, and
+	// removal. Queue and directory operations would act on hidden state.
+	if m.browserBookmarks {
+		switch action {
+		case ActionOpen, ActionParent,
+			ActionUp, ActionDown, ActionPageUp, ActionPageDown,
+			ActionFirst, ActionLast, ActionSearch, ActionRemove,
+			ActionShowBookmarks:
+		default:
+			return nil
+		}
+	}
+
 	switch action {
 	case ActionOpen:
 		return m.browserOpen()
 	case ActionPreview:
 		return m.browserPreview()
 	case ActionParent:
+		if m.browserBookmarks {
+			return m.closeBookmarks()
+		}
 		return m.browserBack()
 	case ActionUp:
 		m.moveBrowserSelection(-1)
@@ -867,6 +912,14 @@ func (m *Model) handleBrowserAction(action Action) tea.Cmd {
 	case ActionSearch:
 		m.browserSearching = true
 		m.browserSearch = m.browserFilter
+	case ActionAddBookmark:
+		return m.addBookmark()
+	case ActionShowBookmarks:
+		return m.toggleBookmarks()
+	case ActionRemove:
+		if m.browserBookmarks {
+			return m.removeBookmark()
+		}
 	case ActionToggleTags:
 		return m.toggleBrowserTags()
 	case ActionInfo:

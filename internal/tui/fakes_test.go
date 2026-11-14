@@ -247,6 +247,57 @@ func baseOptions() Options {
 	}
 }
 
+// fakeBookmarkStore records bookmark saves and returns configured paths.
+type fakeBookmarkStore struct {
+	mu      sync.Mutex
+	paths   []string
+	loadErr error
+	saveErr error
+	saved   [][]string
+}
+
+func (s *fakeBookmarkStore) Load() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
+	return append([]string(nil), s.paths...), nil
+}
+
+func (s *fakeBookmarkStore) Save(paths []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	saved := append([]string(nil), paths...)
+	s.saved = append(s.saved, saved)
+	s.paths = saved
+	return nil
+}
+
+func (s *fakeBookmarkStore) setSaveErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saveErr = err
+}
+
+func (s *fakeBookmarkStore) saveCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.saved)
+}
+
+func (s *fakeBookmarkStore) lastSaved() ([]string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.saved) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), s.saved[len(s.saved)-1]...), true
+}
+
 func newTestModel(t *testing.T, mutate func(*Options)) *Model {
 	t.Helper()
 	opts := baseOptions()

@@ -63,13 +63,14 @@ type playlistTab struct {
 
 // Model is the Bubble Tea model for the player2 shell.
 type Model struct {
-	cfg     config.Config
-	scanner Scanner
-	player  Player
-	store   QueueStore
-	prober  Prober
-	keys    KeyMap
-	styles  Styles
+	cfg           config.Config
+	scanner       Scanner
+	player        Player
+	store         QueueStore
+	bookmarkStore BookmarkStore
+	prober        Prober
+	keys          KeyMap
+	styles        Styles
 
 	startDir   string
 	startupErr error
@@ -129,6 +130,26 @@ type Model struct {
 	browserShowTags    bool
 	browserMeta        map[string]meta.Info
 	browserProbing     map[browserProbeKey]struct{}
+
+	// Bookmarks are a small, global list of directories. The browser can show
+	// them in place of a directory listing. bookmarkReturn restores the
+	// directory location when the bookmark view closes.
+	bookmarks        []string
+	browserBookmarks bool
+	bookmarkReturn   browserLocation
+	// bookmarkLoadErr keeps a failed startup load visible and prevents writes
+	// that would replace the unreadable file with an in-memory list.
+	bookmarkLoadErr error
+
+	// Bookmark persistence is single-flight like the queue. bookmarksDirty
+	// records an unsaved change (including a failed save), bookmarkResave a
+	// change that arrived while a save was running, and bookmarksFlushed an
+	// exit-time save that queued saves must not overwrite.
+	bookmarkSaving   bool
+	bookmarkResave   bool
+	bookmarksDirty   bool
+	bookmarkSaveMu   sync.Mutex
+	bookmarksFlushed bool
 
 	// Playlist pane state.
 	playlistSelected int
@@ -201,6 +222,7 @@ func New(opts Options) *Model {
 		scanner:        opts.Scanner,
 		player:         opts.Player,
 		store:          opts.Store,
+		bookmarkStore:  opts.BookmarkStore,
 		prober:         opts.Prober,
 		width:          defaultWidth,
 		height:         defaultHeight,
@@ -253,6 +275,16 @@ func New(opts Options) *Model {
 	}
 	m.startDir = startDir
 	m.browserPath = startDir
+
+	if m.bookmarkStore != nil {
+		paths, err := m.bookmarkStore.Load()
+		if err != nil {
+			m.bookmarkLoadErr = err
+			m.setStatusError("bookmarks: " + err.Error())
+		} else {
+			m.bookmarks = normalizeBookmarks(paths)
+		}
+	}
 
 	return m
 }
@@ -339,6 +371,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case queueSavedMsg:
 		return m, m.applyQueueSaved(msg)
+
+	case bookmarksSavedMsg:
+		return m, m.applyBookmarksSaved(msg)
 
 	case queueMetadataMsg:
 		return m, m.applyQueueMetadata(msg)

@@ -66,7 +66,7 @@ test suite require a real audio device or terminal.
 | `internal/library` | Directory scanner, CUE virtual folders, recursive walk |
 | `internal/queue` | Queue items, stable IDs, current index, shuffle/repeat, snapshots |
 | `internal/playlist` | M3U/M3U8 read/write, CUE-track extension |
-| `internal/store` | Versioned queue JSON, atomic writes, pruning |
+| `internal/store` | Versioned queue and bookmark JSON, atomic writes, queue pruning |
 | `internal/audio` | Decoder/stream/sink interfaces, extension registry, PCM ring |
 | `internal/audio/ffmpeg` | FFmpeg subprocess decoder |
 | `internal/audio/malgo` | malgo/miniaudio output sink |
@@ -126,6 +126,10 @@ especially config → TUI.
   pending; do not overwrite an existing queue file with an empty in-memory queue.
 - `store.Save` remains atomic (same-directory temp + rename), mode `0600`; state
   directories are `0700`.
+- Filesystem bookmarks are a small global path list in
+  `<XDG_DATA_HOME>/player2/bookmarks.json`, not a library index. Keep schema
+  version 1, retain missing paths (they stay removable), and use the same
+  single-flight/coalescing save and exit-flush discipline as the queue.
 - M3U relative paths beginning with `#` or carrying significant leading/trailing
   whitespace are written with a `./` prefix. Keep round-trips safe for hostile
   filenames.

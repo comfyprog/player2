@@ -42,20 +42,28 @@ type QueueStore interface {
 	SaveTabs(active int, tabs []queue.TabSnapshot) error
 }
 
+// BookmarkStore persists the filesystem bookmark paths.
+type BookmarkStore interface {
+	Load() ([]string, error)
+	Save(paths []string) error
+}
+
 // Prober supplies metadata for plain audio files.
 type Prober interface {
 	Probe(ctx context.Context, path string) (meta.Info, error)
 }
 
-// Options configures a TUI model. Scanner, Player, Store, and Prober may be nil
-// so the shell can render before (or without) playback wiring.
+// Options configures a TUI model. Scanner, Player, Store, BookmarkStore, and
+// Prober may be nil so the shell can render before (or without) playback and
+// persistence wiring.
 type Options struct {
-	Config   config.Config
-	StartDir string
-	Scanner  Scanner
-	Player   Player
-	Store    QueueStore
-	Prober   Prober
+	Config        config.Config
+	StartDir      string
+	Scanner       Scanner
+	Player        Player
+	Store         QueueStore
+	BookmarkStore BookmarkStore
+	Prober        Prober
 }
 
 // Validate checks the parts of opts that must fail startup, currently the

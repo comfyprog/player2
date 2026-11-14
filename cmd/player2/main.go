@@ -152,13 +152,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	queueStore := store.New(filepath.Join(stateDir, "queue.json"))
 
+	dataDir, err := xdg.DataDir()
+	if err != nil {
+		fmt.Fprintf(stderr, "player2: locate data directory: %v\n", err)
+		logger.Printf("locate data directory: %v", err)
+		return 1
+	}
+	bookmarkStore := store.NewBookmarks(filepath.Join(dataDir, "bookmarks.json"))
+
 	tuiOpts := tui.Options{
-		Config:   cfg,
-		StartDir: startDir,
-		Scanner:  scanner,
-		Player:   engine,
-		Store:    queueStore,
-		Prober:   prober,
+		Config:        cfg,
+		StartDir:      startDir,
+		Scanner:       scanner,
+		Player:        engine,
+		Store:         queueStore,
+		BookmarkStore: bookmarkStore,
+		Prober:        prober,
 	}
 	if err := tui.Validate(tuiOpts); err != nil {
 		fmt.Fprintf(stderr, "player2: invalid configuration: %v\n", err)
@@ -176,15 +185,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 	program := tea.NewProgram(model)
 	_, runErr := program.Run()
 
-	// Save the latest queue before closing playback. FlushQueue serializes with
+	// Save the latest state before closing playback. Each flush serializes with
 	// any asynchronous save still in flight, so exit cannot persist stale state.
 	flushErr := model.FlushQueue()
+	bookmarkErr := model.FlushBookmarks()
 	closeErr := closeEngine()
 
 	exitCode := 0
 	if flushErr != nil {
 		fmt.Fprintf(stderr, "player2: save queue: %v\n", flushErr)
 		logger.Printf("save queue: %v", flushErr)
+		exitCode = 1
+	}
+	if bookmarkErr != nil {
+		fmt.Fprintf(stderr, "player2: save bookmarks: %v\n", bookmarkErr)
+		logger.Printf("save bookmarks: %v", bookmarkErr)
 		exitCode = 1
 	}
 	if closeErr != nil {

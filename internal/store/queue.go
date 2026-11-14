@@ -1,11 +1,13 @@
-// Package store persists playlist tabs as versioned JSON.
+// Package store persists playlist tabs and filesystem bookmarks as versioned
+// JSON.
 //
 // LoadTabs prunes references to missing or non-regular local files in every
-// tab and preserves each tab's current item when it survives. SaveTabs writes
-// atomically through a temporary file and leaves the destination with mode
-// 0600. Version 1 queue files are read as a single unnamed tab and version 2
-// files as unnamed tabs. The package performs local file I/O only, starts no
-// goroutines, and keeps no cache; the caller serializes access.
+// tab and preserves each tab's current item when it survives. SaveTabs and the
+// bookmark store write atomically through a temporary file and leave the
+// destination with mode 0600. Version 1 queue files are read as a single
+// unnamed tab and version 2 files as unnamed tabs. The package performs local
+// file I/O only, starts no goroutines, and keeps no cache; the caller
+// serializes access.
 package store
 
 import (
@@ -14,7 +16,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"player2/internal/queue"
 )
@@ -176,44 +177,7 @@ func (s *Store) SaveTabs(active int, tabs []queue.TabSnapshot) error {
 	if err != nil {
 		return fmt.Errorf("store: encode tabs: %w", err)
 	}
-
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("store: create directory %s: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".player2-queue-*")
-	if err != nil {
-		return fmt.Errorf("store: create temporary file: %w", err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("store: write temporary file: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("store: set temporary file mode: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("store: sync temporary file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("store: close temporary file: %w", err)
-	}
-	if err := os.Rename(tmpName, s.path); err != nil {
-		return fmt.Errorf("store: replace %s: %w", s.path, err)
-	}
-	cleanup = false
-	return nil
+	return writeFileAtomic(s.path, data, ".player2-queue-*")
 }
 
 // pruneSnapshot drops items whose audio or CUE file is missing or not a

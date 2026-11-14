@@ -105,6 +105,8 @@ All keys are configurable; these are the defaults.
 | Shuffle | `s` | Toggle shuffle for the active tab |
 | Repeat | `r` | Cycle repeat for the active tab |
 | Search | `/` | Filter the browser by substring |
+| Bookmark directory | `f` | Add the current directory to bookmarks |
+| Show bookmarks | `F` | Show the bookmark list in the browser |
 | Toggle tags | `t` | Switch the browser between filenames and tags |
 | Track info | `i` | Show details for the highlighted audio file |
 | Save playlist | `w` | Save the active tab as an M3U file |
@@ -159,6 +161,32 @@ Pressing `z` (`toggle_zoom` in `[keys]`) hides the inactive pane and shows the
 focused one at full width. Pressing `z` again restores both panes. `Tab` also
 leaves zoom and moves focus to the other pane. Zoom is not persisted across
 runs.
+
+### Bookmarks
+
+Press `f` (`add_bookmark` in `[keys]`) in the browser to add the current
+directory to a small global bookmark list. Adding the same directory twice is a
+no-op, and CUE virtual folders cannot be bookmarked. Bookmarks are shortcuts,
+not a library index.
+
+Press `F` (`show_bookmarks` in `[keys]`) to replace the browser listing with the
+bookmark list. It behaves like a directory listing: arrows, paging, Home/End,
+and `/` filtering work. Rows show home-abbreviated paths and are marked
+`[BOOKMARKS]` in the status line.
+
+- `Enter` opens the bookmarked directory.
+- `d` removes the selected bookmark.
+- `Backspace` or `F` returns to the directory that opened the list.
+- Opening a bookmark starts a fresh navigation history, so `Backspace` from
+  there goes to the bookmarked directory's parent.
+
+Bookmarks are global across playlist tabs and persist in
+`$XDG_DATA_HOME/player2/bookmarks.json`
+(`~/.local/share/player2/bookmarks.json` by default). Missing or unreadable
+bookmarked directories stay in the list; opening one reports the load error, and
+you can press `F` again and use `d` to remove it. If the bookmark file itself
+cannot be read at startup, the status line reports it and bookmark changes are
+disabled until you repair or remove the file and restart.
 
 ## Playlist tabs
 

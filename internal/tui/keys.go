@@ -12,53 +12,55 @@ type Action string
 
 // Action names accepted in [keys].
 const (
-	ActionQuit         Action = "quit"
-	ActionHelp         Action = "help"
-	ActionSwitchPane   Action = "switch_pane"
-	ActionTab0         Action = "tab_0"
-	ActionTab1         Action = "tab_1"
-	ActionTab2         Action = "tab_2"
-	ActionTab3         Action = "tab_3"
-	ActionTab4         Action = "tab_4"
-	ActionTab5         Action = "tab_5"
-	ActionTab6         Action = "tab_6"
-	ActionTab7         Action = "tab_7"
-	ActionTab8         Action = "tab_8"
-	ActionTab9         Action = "tab_9"
-	ActionToggleZoom   Action = "toggle_zoom"
-	ActionOpen         Action = "open"
-	ActionPreview      Action = "preview"
-	ActionParent       Action = "parent"
-	ActionUp           Action = "up"
-	ActionDown         Action = "down"
-	ActionPageUp       Action = "page_up"
-	ActionPageDown     Action = "page_down"
-	ActionFirst        Action = "first"
-	ActionLast         Action = "last"
-	ActionAdd          Action = "add"
-	ActionAddAll       Action = "add_all"
-	ActionRemove       Action = "remove"
-	ActionMoveUp       Action = "move_up"
-	ActionMoveDown     Action = "move_down"
-	ActionPause        Action = "pause"
-	ActionStop         Action = "stop"
-	ActionNext         Action = "next"
-	ActionPrevious     Action = "previous"
-	ActionSeekBack     Action = "seek_back"
-	ActionSeekForward  Action = "seek_forward"
-	ActionVolumeUp     Action = "volume_up"
-	ActionVolumeDown   Action = "volume_down"
-	ActionMute         Action = "mute"
-	ActionShuffle      Action = "shuffle"
-	ActionRepeat       Action = "repeat"
-	ActionSearch       Action = "search"
-	ActionToggleTags   Action = "toggle_tags"
-	ActionInfo         Action = "info"
-	ActionSavePlaylist Action = "save_playlist"
-	ActionNameTab      Action = "name_tab"
-	ActionRescan       Action = "rescan"
-	ActionClear        Action = "clear"
-	ActionGotoPlaying  Action = "goto_playing"
+	ActionQuit          Action = "quit"
+	ActionHelp          Action = "help"
+	ActionSwitchPane    Action = "switch_pane"
+	ActionTab0          Action = "tab_0"
+	ActionTab1          Action = "tab_1"
+	ActionTab2          Action = "tab_2"
+	ActionTab3          Action = "tab_3"
+	ActionTab4          Action = "tab_4"
+	ActionTab5          Action = "tab_5"
+	ActionTab6          Action = "tab_6"
+	ActionTab7          Action = "tab_7"
+	ActionTab8          Action = "tab_8"
+	ActionTab9          Action = "tab_9"
+	ActionToggleZoom    Action = "toggle_zoom"
+	ActionOpen          Action = "open"
+	ActionPreview       Action = "preview"
+	ActionParent        Action = "parent"
+	ActionUp            Action = "up"
+	ActionDown          Action = "down"
+	ActionPageUp        Action = "page_up"
+	ActionPageDown      Action = "page_down"
+	ActionFirst         Action = "first"
+	ActionLast          Action = "last"
+	ActionAdd           Action = "add"
+	ActionAddAll        Action = "add_all"
+	ActionRemove        Action = "remove"
+	ActionMoveUp        Action = "move_up"
+	ActionMoveDown      Action = "move_down"
+	ActionPause         Action = "pause"
+	ActionStop          Action = "stop"
+	ActionNext          Action = "next"
+	ActionPrevious      Action = "previous"
+	ActionSeekBack      Action = "seek_back"
+	ActionSeekForward   Action = "seek_forward"
+	ActionVolumeUp      Action = "volume_up"
+	ActionVolumeDown    Action = "volume_down"
+	ActionMute          Action = "mute"
+	ActionShuffle       Action = "shuffle"
+	ActionRepeat        Action = "repeat"
+	ActionSearch        Action = "search"
+	ActionAddBookmark   Action = "add_bookmark"
+	ActionShowBookmarks Action = "show_bookmarks"
+	ActionToggleTags    Action = "toggle_tags"
+	ActionInfo          Action = "info"
+	ActionSavePlaylist  Action = "save_playlist"
+	ActionNameTab       Action = "name_tab"
+	ActionRescan        Action = "rescan"
+	ActionClear         Action = "clear"
+	ActionGotoPlaying   Action = "goto_playing"
 )
 
 // actionOrder is the stable order used by help and hint rendering.
@@ -103,6 +105,8 @@ var actionOrder = []Action{
 	ActionShuffle,
 	ActionRepeat,
 	ActionSearch,
+	ActionAddBookmark,
+	ActionShowBookmarks,
 	ActionToggleTags,
 	ActionInfo,
 	ActionSavePlaylist,
@@ -114,53 +118,55 @@ var actionOrder = []Action{
 
 // actionDescriptions maps actions to the labels shown in help.
 var actionDescriptions = map[Action]string{
-	ActionQuit:         "Quit",
-	ActionHelp:         "Help",
-	ActionSwitchPane:   "Switch pane",
-	ActionTab0:         "Switch to tab 0",
-	ActionTab1:         "Switch to tab 1",
-	ActionTab2:         "Switch to tab 2",
-	ActionTab3:         "Switch to tab 3",
-	ActionTab4:         "Switch to tab 4",
-	ActionTab5:         "Switch to tab 5",
-	ActionTab6:         "Switch to tab 6",
-	ActionTab7:         "Switch to tab 7",
-	ActionTab8:         "Switch to tab 8",
-	ActionTab9:         "Switch to tab 9",
-	ActionToggleZoom:   "Zoom active pane",
-	ActionOpen:         "Open/play",
-	ActionPreview:      "Preview track",
-	ActionParent:       "Parent directory",
-	ActionUp:           "Move up",
-	ActionDown:         "Move down",
-	ActionPageUp:       "Page up",
-	ActionPageDown:     "Page down",
-	ActionFirst:        "First",
-	ActionLast:         "Last",
-	ActionAdd:          "Add",
-	ActionAddAll:       "Add all",
-	ActionRemove:       "Remove",
-	ActionMoveUp:       "Move item up",
-	ActionMoveDown:     "Move item down",
-	ActionPause:        "Play/pause",
-	ActionStop:         "Stop",
-	ActionNext:         "Next",
-	ActionPrevious:     "Previous",
-	ActionSeekBack:     "Seek back 5s",
-	ActionSeekForward:  "Seek forward 5s",
-	ActionVolumeUp:     "Volume up",
-	ActionVolumeDown:   "Volume down",
-	ActionMute:         "Mute",
-	ActionShuffle:      "Shuffle",
-	ActionRepeat:       "Repeat",
-	ActionSearch:       "Search",
-	ActionToggleTags:   "Toggle tags",
-	ActionInfo:         "Track info",
-	ActionSavePlaylist: "Save playlist",
-	ActionNameTab:      "Name tab",
-	ActionRescan:       "Rescan",
-	ActionClear:        "Clear queue",
-	ActionGotoPlaying:  "Go to playing",
+	ActionQuit:          "Quit",
+	ActionHelp:          "Help",
+	ActionSwitchPane:    "Switch pane",
+	ActionTab0:          "Switch to tab 0",
+	ActionTab1:          "Switch to tab 1",
+	ActionTab2:          "Switch to tab 2",
+	ActionTab3:          "Switch to tab 3",
+	ActionTab4:          "Switch to tab 4",
+	ActionTab5:          "Switch to tab 5",
+	ActionTab6:          "Switch to tab 6",
+	ActionTab7:          "Switch to tab 7",
+	ActionTab8:          "Switch to tab 8",
+	ActionTab9:          "Switch to tab 9",
+	ActionToggleZoom:    "Zoom active pane",
+	ActionOpen:          "Open/play",
+	ActionPreview:       "Preview track",
+	ActionParent:        "Parent directory",
+	ActionUp:            "Move up",
+	ActionDown:          "Move down",
+	ActionPageUp:        "Page up",
+	ActionPageDown:      "Page down",
+	ActionFirst:         "First",
+	ActionLast:          "Last",
+	ActionAdd:           "Add",
+	ActionAddAll:        "Add all",
+	ActionRemove:        "Remove",
+	ActionMoveUp:        "Move item up",
+	ActionMoveDown:      "Move item down",
+	ActionPause:         "Play/pause",
+	ActionStop:          "Stop",
+	ActionNext:          "Next",
+	ActionPrevious:      "Previous",
+	ActionSeekBack:      "Seek back 5s",
+	ActionSeekForward:   "Seek forward 5s",
+	ActionVolumeUp:      "Volume up",
+	ActionVolumeDown:    "Volume down",
+	ActionMute:          "Mute",
+	ActionShuffle:       "Shuffle",
+	ActionRepeat:        "Repeat",
+	ActionSearch:        "Search",
+	ActionAddBookmark:   "Bookmark directory",
+	ActionShowBookmarks: "Show bookmarks",
+	ActionToggleTags:    "Toggle tags",
+	ActionInfo:          "Track info",
+	ActionSavePlaylist:  "Save playlist",
+	ActionNameTab:       "Name tab",
+	ActionRescan:        "Rescan",
+	ActionClear:         "Clear queue",
+	ActionGotoPlaying:   "Go to playing",
 }
 
 // tabActions maps tab index to the action that switches to it.

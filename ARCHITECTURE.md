@@ -70,7 +70,7 @@ ReplayGain, scrobbling, mouse support, remote control, and Windows/macOS.
 | `internal/library` | directory listings, CUE virtual folders, `Walk` | cue, meta |
 | `internal/queue` | queue model, IDs, shuffle/repeat, snapshots | stdlib |
 | `internal/playlist` | M3U read/write, CUE extension | queue, cue |
-| `internal/store` | tabbed queue JSON persistence and pruning | queue |
+| `internal/store` | tabbed queue and bookmark JSON persistence and queue pruning | queue |
 | `internal/audio` | decoder/stream/sink interfaces, registry, PCM ring | stdlib |
 | `internal/audio/ffmpeg` | subprocess decoder | audio |
 | `internal/audio/malgo` | miniaudio output sink | audio, malgo |
@@ -103,11 +103,12 @@ lives in config so both validation and the TUI keymap share one closed set.
    - `malgo.New()`
    - `player.New(registry, sink, Options{SampleRate, Channels: 2, BufferSeconds})`
    - `store.New(<StateDir>/queue.json)`
-7. Call `tui.Validate` (keymap validation), then `tui.New`, then
-   `tea.NewProgram(model).Run()`.
-8. On exit, flush the latest queue snapshot through the TUI's save mutex, close
-   the player (which closes the sink), and return a non-zero status if a flush,
-   close, or program error occurred.
+   - `store.NewBookmarks(<DataDir>/bookmarks.json)`
+7. Call `tui.Validate` (keymap validation), then `tui.New` (which loads the
+   bookmark list), then `tea.NewProgram(model).Run()`.
+8. On exit, flush the latest queue and bookmark state through their save mutexes,
+   close the player (which closes the sink), and return a non-zero status if a
+   flush, close, or program error occurred.
 
 `tui.New` applies the configured volume to the player before the first frame.
 
@@ -358,6 +359,24 @@ shuffle order. It leaves the queue unchanged on error. `TabSnapshot` embeds a
   `0600`, syncs, and renames over the destination. Failures clean up the temp.
   The whole tab set is rewritten; there is no per-tab file.
 
+### Bookmark store
+
+`internal/store.Bookmarks` reads/writes the separate global bookmark file:
+
+```json
+{"version":1,"paths":["/home/alex/Music","/home/alex/Downloads"]}
+```
+
+- `Load` returns paths in insertion order. A missing file yields an empty list;
+  empty paths and exact duplicates are dropped. Unlike queue restore, missing
+  directories are retained so they remain visible and removable.
+- `Save` rewrites the whole list atomically using the shared queue/bookmark
+  temp-file writer (`0700` directory, `0600` file).
+- Corrupt JSON and unsupported versions are errors. The TUI reports a load error
+  in the status line, starts with an empty list, and blocks bookmark mutations
+  and writes so the unreadable file is never replaced by an in-memory list. A
+  save failure leaves the in-memory list dirty for the exit flush to retry.
+
 ### TUI persistence and restore ordering
 
 - `Model.Init` starts an async `store.LoadTabs` when `restore_queue` is true and a
@@ -377,6 +396,13 @@ shuffle order. It leaves the queue unchanged on error. `TabSnapshot` embeds a
   with the exit `FlushQueue`.
 - Exit calls `FlushQueue` before/alongside `Player.Close`; a pending restore keeps
   the file untouched.
+- Bookmark saves use the same single-flight/coalescing shape with a separate
+  mutex and flush. A clean bookmark list is not rewritten at exit; a failed save
+  stays dirty so `FlushBookmarks` can retry. A save queued before the flush skips
+  after it to avoid overwriting the exit snapshot.
+- Entering the bookmark view bumps the browser generation, so an in-flight
+  directory load cannot install rows underneath it. Opening a bookmark clears
+  the browser navigation stack; closing the list restores the saved location.
 
 ## Playlists
 
@@ -563,7 +589,8 @@ built-in defaults.
 - `ffmpeg_bin`/`ffprobe_bin` must resolve to executables at startup.
 - `extra_audio_extensions` is appended to the built-in scanner/registry list.
 - State: the tabbed queue JSON and debug log live under `<StateDir>`
-  (`~/.local/state/player2`).
+  (`~/.local/state/player2`). The bookmark JSON is user data under `<DataDir>`
+  (`~/.local/share/player2`).
 
 ## Security and failure handling
 
@@ -577,8 +604,9 @@ built-in defaults.
   reported as an error, not a finished track.
 - CUE validation is fail-visible: invalid sheets never hide audio. Missing media
   makes the sheet invalid rather than leaving a phantom folder.
-- Queue/store writes are atomic and serialize through the model's save mutex;
-  startup restore cannot overwrite a valid tabbed file with empty queues.
+- Queue and bookmark writes are atomic and serialize through their model save
+  mutexes; startup restore cannot overwrite a valid tabbed file with empty
+  queues.
 - TUI event delivery is lossless during normal operation (the monitor blocks on a
   full buffer but is unblocked by Close).
 
@@ -623,9 +651,10 @@ channels) consistent with the FFmpeg decoder.
 ### Change persistence
 
 Bump the store schema version and add a read path/migration before changing
-`queue.Snapshot` tags or the `active_tab`/`tabs` envelope. Preserve atomic
-writes, per-tab pruning, mode `0600`, restore-pending suppression, and exit
-flush ordering. Add a round-trip test and a corrupt-version test.
+`queue.Snapshot` tags, the `active_tab`/`tabs` envelope, or the bookmark
+`version`/`paths` envelope. Preserve atomic writes, per-tab pruning, mode `0600`,
+restore-pending suppression, bookmark dirty/flush ordering, and exit flushes. Add
+round-trip and corrupt-version tests for each file.
 
 ### Change CUE behavior
 
