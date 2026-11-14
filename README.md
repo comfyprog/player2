@@ -116,7 +116,30 @@ track without touching the queue, its current item, or the saved queue file.
 The preview stops when the track ends; `n`/`b` are ignored while it is active,
 and pause, seek, volume, and `x` still work. Preview relies on the terminal
 reporting `Shift+Enter` distinctly from `Enter`; if yours does not, bind
-`preview` to another key in `[keys]`.
+`preview` to another key in `[keys]`. For tmux, see [tmux](#tmux) below.
+
+### tmux
+
+tmux does not forward modified keys by default, so `Shift+Enter` arrives as plain
+`Enter` and player2 opens the track instead of previewing it. Enable extended
+keys in `~/.tmux.conf`:
+
+```tmux
+set -s extended-keys on
+set -s extended-keys-format csi-u
+```
+
+Then reload the configuration with `tmux source-file ~/.tmux.conf` or restart
+tmux. Confirm the active server settings with:
+
+```sh
+tmux show-options -sv extended-keys
+tmux show-options -sv extended-keys-format
+```
+
+`extended-keys on` alone is sufficient; `csi-u` selects the modern
+Kitty-compatible encoding. If your tmux does not recognize these options,
+update tmux first.
 
 The browser starts in filename mode. Pressing `t` (`toggle_tags` in `[keys]`)
 shows embedded tags instead: track number, title, album, and artist, with long
