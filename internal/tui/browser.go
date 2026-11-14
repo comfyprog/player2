@@ -535,15 +535,29 @@ func (m *Model) descend(entry library.Entry) tea.Cmd {
 	return m.loadBrowser(entry.Path, false, 0, 0, "")
 }
 
-// browserBack restores the previous location, selection, and offset.
+// browserBack restores the previous location, selection, and offset. At the
+// start of the navigation history it moves to the filesystem parent, so the
+// start directory is an initial location rather than a hard boundary.
 func (m *Model) browserBack() tea.Cmd {
-	if len(m.browserStack) == 0 {
+	if len(m.browserStack) > 0 {
+		location := m.browserStack[len(m.browserStack)-1]
+		m.browserStack = m.browserStack[:len(m.browserStack)-1]
+		m.clearBrowserFilter()
+		return m.loadBrowser(location.Path, location.Cue, location.Selected, location.Offset, "")
+	}
+	if m.browserPath == "" {
 		return nil
 	}
-	location := m.browserStack[len(m.browserStack)-1]
-	m.browserStack = m.browserStack[:len(m.browserStack)-1]
+	parent := filepath.Dir(m.browserPath)
+	if parent == m.browserPath {
+		return nil
+	}
+	focus := library.Entry{Path: m.browserPath}
+	if m.browserCue {
+		focus.CuePath = m.browserPath
+	}
 	m.clearBrowserFilter()
-	return m.loadBrowser(location.Path, location.Cue, location.Selected, location.Offset, "")
+	return m.loadBrowser(parent, false, 0, 0, entryKey(focus))
 }
 
 // rescanBrowser reloads the current location while trying to keep the selected

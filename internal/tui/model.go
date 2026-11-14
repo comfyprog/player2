@@ -257,7 +257,7 @@ func New(opts Options) *Model {
 	return m
 }
 
-// StartDir returns the initial browser root.
+// StartDir returns the initial browser location.
 func (m *Model) StartDir() string { return m.startDir }
 
 // Err returns the startup validation error, if any.

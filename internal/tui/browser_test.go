@@ -269,6 +269,97 @@ func TestBrowserEnterDirectoryAndBackRestoresPosition(t *testing.T) {
 	}
 }
 
+func TestBrowserBackAtStartNavigatesToParent(t *testing.T) {
+	parentEntries := []library.Entry{
+		audioEntry("song.flac", "/music/song.flac"),
+		{Kind: library.KindDir, Name: "Album", Path: "/music/Album"},
+	}
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		"/music": parentEntries,
+	}}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = sc
+		opts.Player = newFakePlayer()
+		opts.StartDir = "/music/Album"
+	})
+	m = resize(t, m, 80, 10)
+	m.browserEntries = []library.Entry{audioEntry("inside.flac", "/music/Album/inside.flac")}
+	m.browserEntriesPath = "/music/Album"
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyBackspace))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if m.browserPath != "/music" {
+		t.Fatalf("browserPath after back at start = %q, want /music", m.browserPath)
+	}
+	if m.browserEntriesPath != "/music" {
+		t.Errorf("browserEntriesPath = %q, want /music", m.browserEntriesPath)
+	}
+	if len(m.browserStack) != 0 {
+		t.Errorf("stack depth = %d, want 0", len(m.browserStack))
+	}
+	if m.browserSelected != 1 {
+		t.Errorf("browserSelected = %d, want 1 (Album entry)", m.browserSelected)
+	}
+}
+
+func TestBrowserBackAtStartLeavesCueFolder(t *testing.T) {
+	cuePath := "/music/Album.cue"
+	parentEntries := []library.Entry{
+		audioEntry("song.flac", "/music/song.flac"),
+		{Kind: library.KindCueDir, Name: "Album.cue/", Path: cuePath, CuePath: cuePath},
+	}
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		"/music": parentEntries,
+	}}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = sc
+		opts.Player = newFakePlayer()
+		opts.StartDir = cuePath
+	})
+	m = resize(t, m, 80, 10)
+	m.browserCue = true
+	m.browserEntries = []library.Entry{cueTrackEntry("One", "/music/song.flac", cuePath, 1, 0, 3*time.Minute)}
+	m.browserEntriesPath = cuePath
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyBackspace))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if m.browserPath != "/music" {
+		t.Fatalf("browserPath after back at start = %q, want /music", m.browserPath)
+	}
+	if m.browserCue {
+		t.Error("browserCue = true after leaving the initial CUE folder")
+	}
+	if len(m.browserStack) != 0 {
+		t.Errorf("stack depth = %d, want 0", len(m.browserStack))
+	}
+	if m.browserSelected != 1 {
+		t.Errorf("browserSelected = %d, want 1 (CUE folder entry)", m.browserSelected)
+	}
+}
+
+func TestBrowserBackAtFilesystemRootDoesNothing(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = &testScanner{}
+		opts.Player = newFakePlayer()
+		opts.StartDir = "/"
+	})
+	m = resize(t, m, 80, 10)
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyBackspace))
+
+	if cmd != nil {
+		t.Errorf("command = %v, want nil at filesystem root", cmd)
+	}
+	if m.browserPath != "/" {
+		t.Errorf("browserPath = %q, want /", m.browserPath)
+	}
+	if len(m.browserStack) != 0 {
+		t.Errorf("stack depth = %d, want 0", len(m.browserStack))
+	}
+}
+
 func TestBrowserEnterCueFolderAndBack(t *testing.T) {
 	cuePath := "/music/Album.cue"
 	tracks := []library.Entry{

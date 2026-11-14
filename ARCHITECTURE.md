@@ -442,7 +442,9 @@ built-in defaults.
 ### Browser
 
 - Navigation stack stores path, selected index, offset, and whether the location is
-  a CUE folder. Backspace restores the prior selection/offset.
+  a CUE folder. Backspace restores the prior selection/offset; with no history it
+  moves to the filesystem parent, selecting the directory just left. At `/` it is a
+  no-op.
 - Directory/CUE loads are async with a generation counter. Stale results are
   ignored; the previous listing is cleared when the destination changes so actions
   cannot target stale rows. Loading blocks open/add actions.

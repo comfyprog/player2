@@ -279,9 +279,9 @@ func newLogger(debug bool, stderr io.Writer) (*log.Logger, func()) {
 	return log.New(file, "", log.LstdFlags), func() { _ = file.Close() }
 }
 
-// resolveStartDir chooses the browser root. A CLI directory must exist and be a
-// directory; an unusable configured start_dir falls back to the current
-// directory.
+// resolveStartDir chooses the initial browser directory. A CLI directory must
+// exist and be a directory; an unusable configured start_dir falls back to the
+// current directory.
 func resolveStartDir(cliDir string, cfg config.Config, logger *log.Logger) (string, error) {
 	if cliDir != "" {
 		abs, err := filepath.Abs(cliDir)
