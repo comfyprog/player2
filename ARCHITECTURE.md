@@ -427,6 +427,13 @@ built-in defaults.
   level queue (only when selected directly). Playlist loading stops playback,
   starts an async expansion, replaces the queue, plays the first item, and reports
   skipped missing files.
+- Shift+Enter previews an audio file or CUE track without touching the queue.
+  Preview items live only in the TUI, get IDs from the top of the uint64 range so
+  they cannot collide with queue IDs, and persist nowhere. Queue events are
+  ignored while a preview is active, next/previous are ignored, and a finished
+  preview simply stops. Preview metadata probes update only the preview state.
+  A playback-intent epoch drops stale async level/playlist builds so a slow
+  Enter cannot replace a preview started afterwards.
 - Browser CUE-track rows show `NN. Title — Performer` and the sheet duration,
   right-aligned and width-safe.
 - `t` toggles plain audio rows between filenames and embedded tags

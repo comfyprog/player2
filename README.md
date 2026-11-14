@@ -86,6 +86,7 @@ All keys are configurable; these are the defaults.
 | Switch pane | `Tab` | Move between the browser and playlist |
 | Zoom active pane | `z` | Show only the focused pane |
 | Open/play | `Enter` | Open a directory/CUE folder or play the selection |
+| Preview track | `Shift+Enter` | Play a track without changing the queue |
 | Parent directory | `Backspace` | Go up one directory |
 | Move up/down | `Up`/`k`, `Down`/`j` | Move the selection |
 | Page up/down | `PgUp`, `PgDn` | Move one screen |
@@ -109,6 +110,13 @@ All keys are configurable; these are the defaults.
 | Rescan | `R` | Reload the current directory |
 | Clear queue | `c` | Clear the queue (with confirmation) |
 | Go to playing | `g` | Select the current queue item |
+
+`Shift+Enter` (`preview` in `[keys]`) auditions the highlighted audio file or CUE
+track without touching the queue, its current item, or the saved queue file.
+The preview stops when the track ends; `n`/`b` are ignored while it is active,
+and pause, seek, volume, and `x` still work. Preview relies on the terminal
+reporting `Shift+Enter` distinctly from `Enter`; if yours does not, bind
+`preview` to another key in `[keys]`.
 
 The browser starts in filename mode. Pressing `t` (`toggle_tags` in `[keys]`)
 shows embedded tags instead: track number, title, album, and artist, with long

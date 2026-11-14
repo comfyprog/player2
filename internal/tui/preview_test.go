@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"player2/internal/library"
 	"player2/internal/meta"
@@ -26,6 +27,26 @@ func startTestPreview(t *testing.T, m *Model) *Model {
 		t.Fatal("shift+enter returned no command")
 	}
 	return runCmd(t, m, cmd)
+}
+
+func TestPreviewHeaderAndProgressUsePreviewItem(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))
+	m.queue.SetCurrent(0)
+	m.browserEntries = []library.Entry{
+		cueTrackEntry("Long", "/music/song.flac", "/music/Album.cue", 1, 0, 2*time.Minute),
+	}
+
+	m = startTestPreview(t, m)
+
+	header := ansi.Strip(m.headerLine())
+	if !strings.Contains(header, "preview: Long") {
+		t.Errorf("header = %q, want preview label", header)
+	}
+	plain, _ := m.progress()
+	if !strings.Contains(plain, "0:00 / 2:00") {
+		t.Errorf("progress = %q, want preview duration 2:00", plain)
+	}
 }
 
 func TestBrowserPreviewPlaysWithoutChangingQueue(t *testing.T) {
