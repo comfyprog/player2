@@ -290,11 +290,11 @@ func TestPlaylistRenderScrollingAndWidthSafety(t *testing.T) {
 func TestPlaylistEmptyState(t *testing.T) {
 	m, _ := newPlaylistModel(t, nil)
 	plain := playlistPlain(m)
-	if !strings.Contains(plain, "Queue is empty") {
+	if !strings.Contains(plain, "Tab 0 is empty") {
 		t.Errorf("empty playlist render missing empty state:\n%s", plain)
 	}
-	if !strings.Contains(plain, "Playlist (0)") {
-		t.Errorf("empty playlist title lacks count:\n%s", plain)
+	if !strings.Contains(plain, "[0]") {
+		t.Errorf("empty playlist render lacks active tab marker:\n%s", plain)
 	}
 }
 
@@ -897,18 +897,21 @@ func TestSaveAfterMutations(t *testing.T) {
 
 type blockingStore struct {
 	mu      sync.Mutex
-	saved   []queue.Snapshot
+	saved   []savedTabs
 	started chan struct{}
 	release chan struct{}
 }
 
-func (s *blockingStore) Load() (queue.Snapshot, int, error) {
-	return queue.Snapshot{}, 0, nil
+func (s *blockingStore) LoadTabs() (int, []queue.Snapshot, int, error) {
+	return 0, nil, 0, nil
 }
 
-func (s *blockingStore) Save(snapshot queue.Snapshot) error {
+func (s *blockingStore) SaveTabs(active int, tabs []queue.Snapshot) error {
 	s.mu.Lock()
-	s.saved = append(s.saved, snapshot)
+	s.saved = append(s.saved, savedTabs{
+		active: active,
+		tabs:   append([]queue.Snapshot(nil), tabs...),
+	})
 	s.mu.Unlock()
 	s.started <- struct{}{}
 	<-s.release
@@ -918,7 +921,13 @@ func (s *blockingStore) Save(snapshot queue.Snapshot) error {
 func (s *blockingStore) snapshots() []queue.Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]queue.Snapshot(nil), s.saved...)
+	out := make([]queue.Snapshot, len(s.saved))
+	for i, saved := range s.saved {
+		if saved.active >= 0 && saved.active < len(saved.tabs) {
+			out[i] = saved.tabs[saved.active]
+		}
+	}
+	return out
 }
 
 func TestSaveQueueCoalescesWhileSaving(t *testing.T) {
@@ -1078,23 +1087,31 @@ func TestStalePlaylistSelectionIsClamped(t *testing.T) {
 // startup restore result is delivered.
 type blockingLoadStore struct {
 	mu       sync.Mutex
+	active   int
+	tabs     []queue.Snapshot
 	snapshot queue.Snapshot
 	skipped  int
 	started  chan struct{}
 	release  chan struct{}
-	saved    []queue.Snapshot
+	saved    []savedTabs
 }
 
-func (s *blockingLoadStore) Load() (queue.Snapshot, int, error) {
+func (s *blockingLoadStore) LoadTabs() (int, []queue.Snapshot, int, error) {
 	s.started <- struct{}{}
 	<-s.release
-	return s.snapshot, s.skipped, nil
+	if s.tabs != nil {
+		return s.active, s.tabs, s.skipped, nil
+	}
+	return s.active, []queue.Snapshot{s.snapshot}, s.skipped, nil
 }
 
-func (s *blockingLoadStore) Save(snapshot queue.Snapshot) error {
+func (s *blockingLoadStore) SaveTabs(active int, tabs []queue.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.saved = append(s.saved, snapshot)
+	s.saved = append(s.saved, savedTabs{
+		active: active,
+		tabs:   append([]queue.Snapshot(nil), tabs...),
+	})
 	return nil
 }
 
@@ -1110,7 +1127,11 @@ func (s *blockingLoadStore) lastSaved() (queue.Snapshot, bool) {
 	if len(s.saved) == 0 {
 		return queue.Snapshot{}, false
 	}
-	return s.saved[len(s.saved)-1], true
+	last := s.saved[len(s.saved)-1]
+	if last.active < 0 || last.active >= len(last.tabs) {
+		return queue.Snapshot{}, false
+	}
+	return last.tabs[last.active], true
 }
 
 func TestLateRestoreDoesNotClobberUserQueue(t *testing.T) {
@@ -1179,7 +1200,7 @@ func TestFlushQueueDoesNotOverwriteBeforeRestore(t *testing.T) {
 		},
 		Current: 0,
 	}
-	if err := diskStore.Save(existing); err != nil {
+	if err := diskStore.SaveTabs(0, []queue.Snapshot{existing}); err != nil {
 		t.Fatalf("seed queue: %v", err)
 	}
 	before, err := os.ReadFile(path)

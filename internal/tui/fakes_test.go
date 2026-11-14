@@ -117,29 +117,47 @@ func (fakeScanner) ResolveCueTrack(context.Context, string, int) (library.Entry,
 	return library.Entry{}, nil
 }
 
-// fakeStore records saved snapshots and returns a configured snapshot.
+// savedTabs is one recorded SaveTabs call.
+type savedTabs struct {
+	active int
+	tabs   []queue.Snapshot
+}
+
+// fakeStore records saved tab state and returns configured tabs. When tabs is
+// nil, snapshot is loaded as tab 0 for tests that only exercise one queue.
 type fakeStore struct {
 	mu       sync.Mutex
+	active   int
+	tabs     []queue.Snapshot
 	snapshot queue.Snapshot
 	skipped  int
 	loadErr  error
 	saveErr  error
-	saved    []queue.Snapshot
+	saved    []savedTabs
 }
 
-func (s *fakeStore) Load() (queue.Snapshot, int, error) {
+func (s *fakeStore) LoadTabs() (int, []queue.Snapshot, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.snapshot, s.skipped, s.loadErr
+	if s.loadErr != nil {
+		return 0, nil, 0, s.loadErr
+	}
+	if s.tabs != nil {
+		return s.active, append([]queue.Snapshot(nil), s.tabs...), s.skipped, nil
+	}
+	return s.active, []queue.Snapshot{s.snapshot}, s.skipped, nil
 }
 
-func (s *fakeStore) Save(snapshot queue.Snapshot) error {
+func (s *fakeStore) SaveTabs(active int, tabs []queue.Snapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.saveErr != nil {
 		return s.saveErr
 	}
-	s.saved = append(s.saved, snapshot)
+	s.saved = append(s.saved, savedTabs{
+		active: active,
+		tabs:   append([]queue.Snapshot(nil), tabs...),
+	})
 	return nil
 }
 
@@ -155,7 +173,21 @@ func (s *fakeStore) lastSaved() (queue.Snapshot, bool) {
 	if len(s.saved) == 0 {
 		return queue.Snapshot{}, false
 	}
-	return s.saved[len(s.saved)-1], true
+	last := s.saved[len(s.saved)-1]
+	if last.active < 0 || last.active >= len(last.tabs) {
+		return queue.Snapshot{}, false
+	}
+	return last.tabs[last.active], true
+}
+
+func (s *fakeStore) lastSavedTabs() (int, []queue.Snapshot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.saved) == 0 {
+		return 0, nil, false
+	}
+	last := s.saved[len(s.saved)-1]
+	return last.active, append([]queue.Snapshot(nil), last.tabs...), true
 }
 
 // fakeProber returns configured metadata and records probed paths.

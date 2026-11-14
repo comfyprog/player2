@@ -24,14 +24,17 @@ func writeFile(t *testing.T, path, content string) {
 
 func saveAndLoad(t *testing.T, path string, snap queue.Snapshot) (queue.Snapshot, int) {
 	t.Helper()
-	if err := New(path).Save(snap); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := New(path).SaveTabs(0, []queue.Snapshot{snap}); err != nil {
+		t.Fatalf("SaveTabs: %v", err)
 	}
-	got, skipped, err := New(path).Load()
+	_, tabs, skipped, err := New(path).LoadTabs()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadTabs: %v", err)
 	}
-	return got, skipped
+	if len(tabs) == 0 {
+		return queue.Snapshot{Items: []queue.Item{}, Current: -1}, skipped
+	}
+	return tabs[0], skipped
 }
 
 func TestSaveLoadRoundtrip(t *testing.T) {
@@ -72,11 +75,11 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	before := in
 	before.Items = append([]queue.Item(nil), in.Items...)
 
-	if err := s.Save(in); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := s.SaveTabs(0, []queue.Snapshot{in}); err != nil {
+		t.Fatalf("SaveTabs: %v", err)
 	}
 	if !reflect.DeepEqual(in, before) {
-		t.Errorf("Save mutated its input:\n got %+v\nwant %+v", in, before)
+		t.Errorf("SaveTabs mutated its input:\n got %+v\nwant %+v", in, before)
 	}
 
 	info, err := os.Stat(path)
@@ -98,38 +101,35 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 		t.Errorf("queue file has no tabs array: %s", data)
 	}
 
-	got, skipped, err := s.Load()
+	_, tabs, skipped, err := s.LoadTabs()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadTabs: %v", err)
 	}
 	if skipped != 0 {
 		t.Errorf("skipped = %d, want 0", skipped)
 	}
-	if !reflect.DeepEqual(got, in) {
-		t.Errorf("Load did not roundtrip:\n got %+v\nwant %+v", got, in)
+	if len(tabs) != 1 {
+		t.Fatalf("tabs = %d, want 1", len(tabs))
+	}
+	if !reflect.DeepEqual(tabs[0], in) {
+		t.Errorf("LoadTabs did not roundtrip:\n got %+v\nwant %+v", tabs[0], in)
 	}
 }
 
 func TestLoadMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "queue.json")
-	got, skipped, err := New(path).Load()
+	_, tabs, skipped, err := New(path).LoadTabs()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadTabs: %v", err)
+	}
+	if len(tabs) != 0 {
+		t.Fatalf("tabs = %d, want 0", len(tabs))
 	}
 	if skipped != 0 {
 		t.Errorf("skipped = %d, want 0", skipped)
 	}
-	if len(got.Items) != 0 {
-		t.Errorf("Items = %+v, want empty", got.Items)
-	}
-	if got.Current != -1 {
-		t.Errorf("Current = %d, want -1", got.Current)
-	}
-	if got.Shuffle || got.Repeat != queue.RepeatOff {
-		t.Errorf("state = shuffle %v repeat %d, want false/off", got.Shuffle, got.Repeat)
-	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Errorf("Load created the missing queue file: %v", err)
+		t.Errorf("LoadTabs created the missing queue file: %v", err)
 	}
 }
 
@@ -148,14 +148,14 @@ func TestLoadInvalidData(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "queue.json")
 			writeFile(t, path, tc.data)
-			if _, _, err := New(path).Load(); err == nil {
-				t.Fatalf("Load accepted invalid data %q", tc.data)
+			if _, _, _, err := New(path).LoadTabs(); err == nil {
+				t.Fatalf("LoadTabs accepted invalid data %q", tc.data)
 			}
 		})
 	}
 
 	t.Run("unreadable path", func(t *testing.T) {
-		if _, _, err := New(t.TempDir()).Load(); err == nil {
+		if _, _, _, err := New(t.TempDir()).LoadTabs(); err == nil {
 			t.Fatal("Load accepted a directory as a queue file")
 		}
 	})
@@ -346,8 +346,8 @@ func TestLoadPreservesAndClampsCurrent(t *testing.T) {
 func TestSaveCreatesParentDirectory(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "state", "player2", "queue.json")
-	if err := New(path).Save(queue.Snapshot{Current: -1}); err != nil {
-		t.Fatalf("Save: %v", err)
+	if err := New(path).SaveTabs(0, []queue.Snapshot{{Current: -1}}); err != nil {
+		t.Fatalf("SaveTabs: %v", err)
 	}
 
 	for _, dir := range []string{
@@ -370,12 +370,12 @@ func TestSaveCreatesParentDirectory(t *testing.T) {
 		t.Errorf("queue mode = %o, want 600", perm)
 	}
 
-	got, skipped, err := New(path).Load()
+	_, tabs, skipped, err := New(path).LoadTabs()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadTabs: %v", err)
 	}
-	if skipped != 0 || len(got.Items) != 0 || got.Current != -1 {
-		t.Errorf("Load after empty Save = %+v, skipped %d", got, skipped)
+	if skipped != 0 || len(tabs) != 1 || len(tabs[0].Items) != 0 || tabs[0].Current != -1 {
+		t.Errorf("LoadTabs after empty Save = %+v, skipped %d", tabs, skipped)
 	}
 }
 
@@ -389,13 +389,13 @@ func TestSaveOverwritesAtomically(t *testing.T) {
 	path := filepath.Join(stateDir, "queue.json")
 	s := New(path)
 
-	if err := s.Save(queue.Snapshot{
+	if err := s.SaveTabs(0, []queue.Snapshot{{
 		Items:   []queue.Item{{ID: 1, Path: audioA, Title: "A"}},
 		Current: 0,
-	}); err != nil {
-		t.Fatalf("first Save: %v", err)
+	}}); err != nil {
+		t.Fatalf("first SaveTabs: %v", err)
 	}
-	if err := s.Save(queue.Snapshot{
+	if err := s.SaveTabs(0, []queue.Snapshot{{
 		Items: []queue.Item{
 			{ID: 1, Path: audioA, Title: "A"},
 			{ID: 2, Path: audioB, Title: "B"},
@@ -403,19 +403,23 @@ func TestSaveOverwritesAtomically(t *testing.T) {
 		Current: 1,
 		Shuffle: true,
 		Repeat:  queue.RepeatOne,
-	}); err != nil {
-		t.Fatalf("second Save: %v", err)
+	}}); err != nil {
+		t.Fatalf("second SaveTabs: %v", err)
 	}
 
-	got, skipped, err := s.Load()
+	_, tabs, skipped, err := s.LoadTabs()
 	if err != nil {
-		t.Fatalf("Load: %v", err)
+		t.Fatalf("LoadTabs: %v", err)
 	}
 	if skipped != 0 {
 		t.Errorf("skipped = %d, want 0", skipped)
 	}
+	if len(tabs) != 1 {
+		t.Fatalf("tabs = %d, want 1", len(tabs))
+	}
+	got := tabs[0]
 	if len(got.Items) != 2 || got.Current != 1 || !got.Shuffle || got.Repeat != queue.RepeatOne {
-		t.Errorf("Load after overwrite = %+v", got)
+		t.Errorf("LoadTabs after overwrite = %+v", got)
 	}
 
 	entries, err := os.ReadDir(stateDir)
@@ -443,8 +447,8 @@ func TestSaveCleansUpTempOnRenameFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := New(target).Save(queue.Snapshot{Current: -1}); err == nil {
-		t.Fatal("Save succeeded when the destination was a directory")
+	if err := New(target).SaveTabs(0, []queue.Snapshot{{Current: -1}}); err == nil {
+		t.Fatal("SaveTabs succeeded when the destination was a directory")
 	}
 
 	entries, err := os.ReadDir(dir)

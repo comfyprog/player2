@@ -95,16 +95,6 @@ func (m *Model) paneLines(pane Pane, width, height int) []string {
 	}
 }
 
-// paneTitle returns the plain title for a pane, fitted to width.
-func (m *Model) paneTitle(pane Pane, width int) string {
-	switch pane {
-	case PanePlaylist:
-		return truncatePlain(fmt.Sprintf("Playlist (%d)", len(m.queue.Snapshot().Items)), width)
-	default:
-		return m.browserTitle(width)
-	}
-}
-
 // headerLine renders the now-playing header.
 func (m *Model) headerLine() string {
 	parts := []string{"player2"}

@@ -1189,3 +1189,22 @@ func TestRepeatSettings(t *testing.T) {
 		t.Fatalf("CycleRepeat() = %d, want RepeatOff", got)
 	}
 }
+
+func TestLen(t *testing.T) {
+	q := newTestQueue(1)
+	if got := q.Len(); got != 0 {
+		t.Fatalf("empty Len() = %d, want 0", got)
+	}
+	q.Append(qitems("a", "b", "c")...)
+	if got := q.Len(); got != 3 {
+		t.Fatalf("Len() = %d, want 3", got)
+	}
+	q.Remove(1)
+	if got := q.Len(); got != 2 {
+		t.Fatalf("Len() after Remove = %d, want 2", got)
+	}
+	q.Clear()
+	if got := q.Len(); got != 0 {
+		t.Fatalf("Len() after Clear = %d, want 0", got)
+	}
+}

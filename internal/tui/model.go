@@ -23,6 +23,10 @@ const (
 	headerRows = 1
 	footerRows = 2
 
+	// tabCount is the fixed number of playlist tabs. It matches the store's
+	// schema limit and the alt+0..alt+9 default bindings.
+	tabCount = 10
+
 	// tickInterval drives the cached player status and status expiry.
 	tickInterval = 250 * time.Millisecond
 
@@ -46,6 +50,14 @@ type browserLocation struct {
 	Selected int
 	Offset   int
 	Cue      bool
+}
+
+// playlistTab is one independent playlist slot. selected and offset preserve
+// its view position while another tab is visible.
+type playlistTab struct {
+	queue    *queue.Queue
+	selected int
+	offset   int
 }
 
 // Model is the Bubble Tea model for the player2 shell.
@@ -83,7 +95,13 @@ type Model struct {
 	// now is injectable for deterministic status-expiry tests.
 	now func() time.Time
 
-	queue *queue.Queue
+	// tabs holds every playlist slot. activeTab is the visible slot and queue
+	// aliases its queue for the playlist actions. playbackTab is the slot that
+	// owns the current stream, or -1 when no queue owns playback.
+	tabs        [tabCount]playlistTab
+	activeTab   int
+	playbackTab int
+	queue       *queue.Queue
 
 	// status caches the last player snapshot so rendering never calls into
 	// the engine. statusMsg is a transient user-facing message.
@@ -185,7 +203,7 @@ func New(opts Options) *Model {
 		width:          defaultWidth,
 		height:         defaultHeight,
 		focus:          PaneBrowser,
-		queue:          queue.New(),
+		playbackTab:    -1,
 		now:            time.Now,
 		status:         player.Status{State: player.StateStopped, Volume: cfg.Volume},
 		lastVolume:     cfg.Volume,
@@ -200,6 +218,11 @@ func New(opts Options) *Model {
 		// the queue) exit must not overwrite the persisted queue.
 		restorePending: cfg.RestoreQueue && opts.Store != nil,
 	}
+
+	for i := range m.tabs {
+		m.tabs[i].queue = queue.New()
+	}
+	m.queue = m.tabs[0].queue
 
 	// The engine defaults to 70; apply the configured level before the first
 	// render so the header and the output device agree.

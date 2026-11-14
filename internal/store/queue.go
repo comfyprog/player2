@@ -175,25 +175,6 @@ func (s *Store) SaveTabs(active int, tabs []queue.Snapshot) error {
 	return nil
 }
 
-// Load is the single-queue compatibility wrapper used until the TUI adopts
-// LoadTabs. It returns the first persisted tab.
-func (s *Store) Load() (queue.Snapshot, int, error) {
-	_, tabs, skipped, err := s.LoadTabs()
-	if err != nil {
-		return queue.Snapshot{}, 0, err
-	}
-	if len(tabs) == 0 {
-		return emptySnapshot(), skipped, nil
-	}
-	return tabs[0], skipped, nil
-}
-
-// Save is the single-queue compatibility wrapper used until the TUI adopts
-// SaveTabs. It writes one tab at index 0.
-func (s *Store) Save(snapshot queue.Snapshot) error {
-	return s.SaveTabs(0, []queue.Snapshot{snapshot})
-}
-
 // pruneSnapshot drops items whose audio or CUE file is missing or not a
 // regular file. It preserves the current item by ID where possible and returns
 // how many items were dropped.
@@ -237,14 +218,6 @@ func pruneSnapshot(snapshot queue.Snapshot) (queue.Snapshot, int) {
 	snapshot.Items = kept
 	snapshot.Current = keptCurrent
 	return snapshot, skipped
-}
-
-// emptySnapshot is the state used when no queue file exists.
-func emptySnapshot() queue.Snapshot {
-	return queue.Snapshot{
-		Items:   []queue.Item{},
-		Current: -1,
-	}
 }
 
 // regularFile reports whether path names an existing regular file. Symlinks to

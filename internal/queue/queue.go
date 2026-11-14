@@ -248,6 +248,11 @@ func (q *Queue) SetCurrent(index int) bool {
 	return true
 }
 
+// Len returns the number of items in the queue.
+func (q *Queue) Len() int {
+	return len(q.items)
+}
+
 // Current returns the current item, if any.
 func (q *Queue) Current() (Item, bool) {
 	if q.current < 0 || q.current >= len(q.items) {

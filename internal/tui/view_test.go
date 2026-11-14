@@ -30,7 +30,7 @@ func TestViewSmoke(t *testing.T) {
 	wants := []string{
 		"player2",
 		"Files:",
-		"Playlist",
+		"[0] 1 2 3 4 5 6 7 8 9",
 		"Status: [FILENAME] ready",
 		"░",
 		"? help",
@@ -100,7 +100,7 @@ func TestZoomShowsOnlyFocusedPane(t *testing.T) {
 	if !strings.Contains(plain, "Files:") {
 		t.Errorf("zoomed browser view missing browser pane: %q", plain)
 	}
-	if strings.Contains(plain, "Playlist (") {
+	if strings.Contains(plain, "[0] 1 2 3 4 5 6 7 8 9") {
 		t.Errorf("zoomed browser view still shows playlist pane: %q", plain)
 	}
 	for i, line := range strings.Split(content, "\n") {
@@ -111,7 +111,7 @@ func TestZoomShowsOnlyFocusedPane(t *testing.T) {
 
 	m = press(t, m, runeKey('z'))
 	plain = ansi.Strip(m.View().Content)
-	if !strings.Contains(plain, "Files:") || !strings.Contains(plain, "Playlist (") {
+	if !strings.Contains(plain, "Files:") || !strings.Contains(plain, "[0] 1 2 3 4 5 6 7 8 9") {
 		t.Errorf("unzoomed view missing a pane: %q", plain)
 	}
 }
@@ -126,7 +126,7 @@ func TestZoomPlaylistAndTabExitsZoom(t *testing.T) {
 	if strings.Contains(plain, "Files:") {
 		t.Errorf("zoomed playlist view still shows browser pane: %q", plain)
 	}
-	if !strings.Contains(plain, "Playlist (") {
+	if !strings.Contains(plain, "[0] 1 2 3 4 5 6 7 8 9") {
 		t.Errorf("zoomed playlist view missing playlist pane: %q", plain)
 	}
 	for i, line := range strings.Split(content, "\n") {
@@ -140,7 +140,7 @@ func TestZoomPlaylistAndTabExitsZoom(t *testing.T) {
 		t.Errorf("focus = %v after Tab from zoomed playlist, want browser", m.focus)
 	}
 	plain = ansi.Strip(m.View().Content)
-	if !strings.Contains(plain, "Files:") || !strings.Contains(plain, "Playlist (") {
+	if !strings.Contains(plain, "Files:") || !strings.Contains(plain, "[0] 1 2 3 4 5 6 7 8 9") {
 		t.Errorf("Tab in zoomed mode did not restore both panes: %q", plain)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,14 +56,15 @@ type transportResultMsg struct {
 	err    error
 }
 
-// queueRestoredMsg is the result of loading a saved queue. epoch records the
-// queue generation when the load started so a late result cannot overwrite a
-// queue changed in the meantime.
+// queueRestoredMsg is the result of loading saved playlist tabs. epoch records
+// the queue generation when the load started so a late result cannot overwrite
+// a queue changed in the meantime.
 type queueRestoredMsg struct {
-	snapshot queue.Snapshot
-	skipped  int
-	err      error
-	epoch    uint64
+	active  int
+	tabs    []queue.Snapshot
+	skipped int
+	err     error
+	epoch   uint64
 }
 
 // queueSavedMsg is the result of an asynchronous queue save.
@@ -124,6 +126,44 @@ func (m *Model) clampPlaylist() {
 	m.playlistOffset = offset
 }
 
+// switchTab makes index the visible playlist tab. It preserves the previous
+// tab's selection and does not change playback.
+func (m *Model) switchTab(index int) tea.Cmd {
+	if index < 0 || index >= tabCount || index == m.activeTab {
+		return nil
+	}
+
+	m.tabs[m.activeTab].selected = m.playlistSelected
+	m.tabs[m.activeTab].offset = m.playlistOffset
+	m.activeTab = index
+	m.queue = m.tabs[index].queue
+	m.playlistSelected = m.tabs[index].selected
+	m.playlistOffset = m.tabs[index].offset
+	m.clampPlaylist()
+
+	if count := m.queue.Len(); count == 0 {
+		m.setStatusOK(fmt.Sprintf("tab %d: empty", index))
+	} else {
+		m.setStatusOK(fmt.Sprintf("tab %d: %d item(s)", index, count))
+	}
+	return m.probeItems()
+}
+
+// queueCurrentIndex returns the index of q's current item, or 0 when there is
+// no current item.
+func queueCurrentIndex(q *queue.Queue) int {
+	current, ok := q.Current()
+	if !ok {
+		return 0
+	}
+	for index, item := range q.Snapshot().Items {
+		if item.ID == current.ID {
+			return index
+		}
+	}
+	return 0
+}
+
 // playlistLines renders the playlist pane's title and rows. Every returned line
 // is exactly width cells once styled.
 func (m *Model) playlistLines(width, height int) []string {
@@ -132,11 +172,7 @@ func (m *Model) playlistLines(width, height int) []string {
 		return lines
 	}
 
-	titleStyle := m.styles.Dim
-	if m.focus == PanePlaylist {
-		titleStyle = m.styles.PaneFocus
-	}
-	lines[0] = titleStyle.Render(fitPlain(m.paneTitle(PanePlaylist, width), width))
+	lines[0] = m.tabStrip(width)
 
 	blank := strings.Repeat(" ", max(width, 0))
 	for i := 1; i < height; i++ {
@@ -150,7 +186,8 @@ func (m *Model) playlistLines(width, height int) []string {
 
 	items := m.queue.Snapshot().Items
 	if len(items) == 0 {
-		lines[1] = m.styles.Dim.Render(fitPlain("Queue is empty", width))
+		empty := fmt.Sprintf("Tab %d is empty", m.activeTab)
+		lines[1] = m.styles.Dim.Render(fitPlain(empty, width))
 		return lines
 	}
 
@@ -176,6 +213,62 @@ func (m *Model) playlistLines(width, height int) []string {
 		lines[row+1] = style.Render(plain)
 	}
 	return lines
+}
+
+// tabStrip renders the ten fixed playlist tabs. The active tab is bracketed,
+// the sounding tab carries the playing marker, and empty tabs are dimmed. The
+// result is width cells wide.
+func (m *Model) tabStrip(width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	used := 0
+	for i := 0; i < tabCount; i++ {
+		label := strconv.Itoa(i)
+		if i == m.playbackTab {
+			label += playingMarker
+		}
+		if i == m.activeTab {
+			label = "[" + label + "]"
+		}
+
+		cellWidth := ansi.StringWidth(label)
+		if i > 0 {
+			cellWidth++
+		}
+		if used+cellWidth > width {
+			break
+		}
+		if i > 0 {
+			b.WriteByte(' ')
+			used++
+		}
+
+		style := m.styles.Fg
+		if m.tabs[i].queue.Len() == 0 {
+			style = m.styles.Dim
+		}
+		if i == m.playbackTab {
+			style = m.styles.Playing
+		}
+		if i == m.activeTab {
+			if m.focus == PanePlaylist {
+				style = m.styles.Selection
+			} else {
+				style = m.styles.PaneFocus
+			}
+		}
+
+		b.WriteString(style.Render(label))
+		used += ansi.StringWidth(label)
+	}
+
+	if used < width {
+		b.WriteString(strings.Repeat(" ", width-used))
+	}
+	return b.String()
 }
 
 // playlistRow formats one row: current marker, track number, title/artist, and
@@ -730,7 +823,7 @@ func (m *Model) saveQueue() tea.Cmd {
 		return nil
 	}
 	m.saving = true
-	snapshot := m.queue.Snapshot()
+	active, tabs := m.stateSnapshot()
 	store := m.store
 	return func() tea.Msg {
 		m.saveMu.Lock()
@@ -740,8 +833,19 @@ func (m *Model) saveQueue() tea.Cmd {
 			// this older async save must not overwrite it.
 			return queueSavedMsg{}
 		}
-		return queueSavedMsg{err: store.Save(snapshot)}
+		return queueSavedMsg{err: store.SaveTabs(active, tabs)}
 	}
+}
+
+// stateSnapshot copies every tab and the active index for persistence. Queue
+// values are snapshotted on the UI goroutine because queues are not
+// thread-safe.
+func (m *Model) stateSnapshot() (int, []queue.Snapshot) {
+	tabs := make([]queue.Snapshot, tabCount)
+	for i := range m.tabs {
+		tabs[i] = m.tabs[i].queue.Snapshot()
+	}
+	return m.activeTab, tabs
 }
 
 // FlushQueue synchronously saves the latest queue snapshot. It shares saveMu
@@ -759,11 +863,11 @@ func (m *Model) FlushQueue() error {
 	if m.restorePending {
 		return nil
 	}
-	snapshot := m.queue.Snapshot()
+	active, tabs := m.stateSnapshot()
 	m.saveMu.Lock()
 	defer m.saveMu.Unlock()
 	m.flushed = true
-	return m.store.Save(snapshot)
+	return m.store.SaveTabs(active, tabs)
 }
 
 // QueueSnapshot returns a copy of the current queue state.
@@ -904,13 +1008,13 @@ func (m *Model) restoreCmd() tea.Cmd {
 	store := m.store
 	epoch := m.queueEpoch
 	return func() tea.Msg {
-		snapshot, skipped, err := store.Load()
-		return queueRestoredMsg{snapshot: snapshot, skipped: skipped, err: err, epoch: epoch}
+		active, tabs, skipped, err := store.LoadTabs()
+		return queueRestoredMsg{active: active, tabs: tabs, skipped: skipped, err: err, epoch: epoch}
 	}
 }
 
-// applyQueueRestored installs a loaded queue, selects its current item, and
-// schedules probes and a save when items were pruned.
+// applyQueueRestored installs every loaded tab, selects the active tab's
+// current item, and schedules probes and a save when items were pruned.
 func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 	if msg.epoch != m.queueEpoch {
 		m.setStatusOK("queue changed; restore skipped")
@@ -920,16 +1024,51 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 		m.setStatusError("restore: " + msg.err.Error())
 		return nil
 	}
-	if err := m.queue.Restore(msg.snapshot); err != nil {
-		m.setStatusError("restore: " + err.Error())
+	if len(msg.tabs) > tabCount {
+		m.setStatusError(fmt.Sprintf("restore: %d tabs exceeds maximum %d", len(msg.tabs), tabCount))
 		return nil
 	}
+
+	// Validate all tabs into fresh queues before installing any of them. A bad
+	// snapshot must not leave a half-restored model.
+	restored := make([]*queue.Queue, tabCount)
+	items := 0
+	nonEmpty := 0
+	for i := 0; i < tabCount; i++ {
+		snapshot := queue.Snapshot{Items: []queue.Item{}, Current: -1}
+		if i < len(msg.tabs) {
+			snapshot = msg.tabs[i]
+		}
+		q := queue.New()
+		if err := q.Restore(snapshot); err != nil {
+			m.setStatusError(fmt.Sprintf("restore tab %d: %v", i, err))
+			return nil
+		}
+		restored[i] = q
+		items += q.Len()
+		if q.Len() > 0 {
+			nonEmpty++
+		}
+	}
+
+	for i := range m.tabs {
+		m.tabs[i].queue = restored[i]
+		m.tabs[i].selected = queueCurrentIndex(restored[i])
+		m.tabs[i].offset = m.tabs[i].selected
+	}
+	m.activeTab = msg.active
+	if m.activeTab < 0 || m.activeTab >= tabCount {
+		m.activeTab = 0
+	}
+	m.queue = m.tabs[m.activeTab].queue
+	m.playlistSelected = m.tabs[m.activeTab].selected
+	m.playlistOffset = m.tabs[m.activeTab].offset
+	m.playbackTab = -1
 	m.restorePending = false
-
 	m.probing = make(map[uint64]string)
-	m.selectCurrent()
+	m.clampPlaylist()
 
-	status := fmt.Sprintf("restored %d item(s)", len(msg.snapshot.Items))
+	status := fmt.Sprintf("restored %d item(s) in %d tab(s)", items, nonEmpty)
 	if msg.skipped > 0 {
 		status += fmt.Sprintf(", skipped %d", msg.skipped)
 	}
