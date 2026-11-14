@@ -153,6 +153,16 @@ type Model struct {
 	// true so an early exit cannot overwrite a valid saved queue with an empty
 	// in-memory one.
 	restorePending bool
+
+	// preview is one-off playback of a browser track outside the queue.
+	// previewSeq hands out IDs from the top of the uint64 range so a preview
+	// item cannot collide with a queue item. playSeq identifies the latest
+	// playback intent so an older asynchronous level/playlist build cannot
+	// replace a newer preview or transport request.
+	previewActive bool
+	previewItem   queue.Item
+	previewSeq    uint64
+	playSeq       uint64
 }
 
 // tickMsg is delivered by the periodic status refresh.
@@ -285,6 +295,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case browserAddMsg:
 		return m, m.applyBrowserAdd(msg)
+
+	case previewMetadataMsg:
+		m.applyPreviewMetadata(msg)
+		return m, nil
 
 	case playerEventMsg:
 		if !msg.ok {

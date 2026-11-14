@@ -304,6 +304,8 @@ func (m *Model) selectPlaylistLast() {
 // playItem queues a Play request. Play opens a decoder and may block, so it
 // never runs inside Update.
 func (m *Model) playItem(item queue.Item, status string) tea.Cmd {
+	m.beginPlaybackIntent()
+	m.clearPreview()
 	return m.requestTransport(transportAction{
 		kind:   transportPlay,
 		item:   item,
@@ -415,13 +417,19 @@ func (m *Model) actionPause() tea.Cmd {
 func (m *Model) actionStop() tea.Cmd {
 	m.setStatusOK("stopped")
 	if m.player == nil {
+		m.clearPreview()
+		m.beginPlaybackIntent()
 		return nil
 	}
-	return m.requestTransport(transportAction{kind: transportStop})
+	return m.stopPlayback()
 }
 
-// actionNext advances the queue and plays the next item.
+// actionNext advances the queue and plays the next item. Next/previous are
+// ignored while a one-off preview owns playback.
 func (m *Model) actionNext() tea.Cmd {
+	if m.previewActive {
+		return nil
+	}
 	previous, hadPrevious := m.queue.Current()
 	selected, hadSelected := m.selectedPlaylistItem()
 	item, ok := m.queue.Next(false)
@@ -435,8 +443,12 @@ func (m *Model) actionNext() tea.Cmd {
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
-// actionPrevious moves back in the queue and plays the previous item.
+// actionPrevious moves back in the queue and plays the previous item. It is
+// ignored while a one-off preview owns playback.
 func (m *Model) actionPrevious() tea.Cmd {
+	if m.previewActive {
+		return nil
+	}
 	previous, hadPrevious := m.queue.Current()
 	selected, hadSelected := m.selectedPlaylistItem()
 	item, ok := m.queue.Prev()
@@ -590,7 +602,7 @@ func (m *Model) playlistRemove() tea.Cmd {
 	}
 	m.bumpQueueEpoch()
 	var stop tea.Cmd
-	if hadPrevious && removed.ID == previous.ID {
+	if hadPrevious && removed.ID == previous.ID && !m.previewActive {
 		stop = m.requestTransport(transportAction{kind: transportStop})
 	}
 	m.clampPlaylist()
@@ -618,7 +630,10 @@ func (m *Model) playlistMove(direction int) tea.Cmd {
 func (m *Model) playlistClear() tea.Cmd {
 	m.queue.Clear()
 	m.bumpQueueEpoch()
-	stop := m.requestTransport(transportAction{kind: transportStop})
+	var stop tea.Cmd
+	if !m.previewActive {
+		stop = m.requestTransport(transportAction{kind: transportStop})
+	}
 	m.playlistSelected = 0
 	m.playlistOffset = 0
 	m.probing = make(map[uint64]string)
@@ -648,6 +663,9 @@ func (m *Model) applyTransportResult(msg transportResultMsg) tea.Cmd {
 	if msg.seq == m.transportSeq {
 		switch {
 		case msg.err != nil:
+			if msg.kind == transportPlay {
+				m.clearPreview()
+			}
 			switch msg.kind {
 			case transportSeek:
 				m.setStatusError("seek: " + msg.err.Error())
@@ -934,6 +952,9 @@ func (m *Model) waitForPlayerEvent() tea.Cmd {
 func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 	if !msg.ok {
 		return nil
+	}
+	if cmd, handled := m.handlePreviewEvent(msg); handled {
+		return cmd
 	}
 	// A late finished/error event from a stream that has already been replaced
 	// must not advance or report against the newly current item.

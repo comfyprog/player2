@@ -180,7 +180,7 @@ func TestViewHelpToggle(t *testing.T) {
 		t.Fatal("help flag not set after ?")
 	}
 	plain := ansi.Strip(m.View().Content)
-	for _, want := range []string{"Keys", "Quit", "Switch pane", "Zoom active pane", "Track info", "Save playlist", "Go to playing"} {
+	for _, want := range []string{"Keys", "Quit", "Switch pane", "Zoom active pane", "Preview track", "Track info", "Save playlist", "Go to playing"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("help overlay missing %q\n%s", want, plain)
 		}
@@ -201,8 +201,8 @@ func TestViewHelpShowsAllBindingsAtNormalSize(t *testing.T) {
 
 	plain := ansi.Strip(m.View().Content)
 	bindings := m.keys.Bindings()
-	if len(bindings) != 35 {
-		t.Fatalf("bindings = %d, want 35", len(bindings))
+	if len(bindings) != 36 {
+		t.Fatalf("bindings = %d, want 36", len(bindings))
 	}
 	for _, binding := range bindings {
 		if !strings.Contains(plain, binding.Description) {

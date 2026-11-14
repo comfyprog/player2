@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -129,29 +128,23 @@ func (m *Model) headerLine() string {
 	return m.styles.Header.Render(fitPlain(plain, m.width))
 }
 
-// nowPlayingLabel describes the current queue item.
+// nowPlayingLabel describes the current playback item.
 func (m *Model) nowPlayingLabel() string {
-	item, ok := m.queue.Current()
+	item, ok := m.playbackItem()
 	if !ok {
 		return "nothing playing"
 	}
 
-	title := item.Title
-	if title == "" {
-		title = strings.TrimSuffix(filepath.Base(item.Path), filepath.Ext(item.Path))
+	label := displayTitle(item)
+	if m.previewActive {
+		return "preview: " + label
 	}
-	if title == "" {
-		title = "unknown"
-	}
-	if item.Artist != "" {
-		return title + " — " + item.Artist
-	}
-	return title
+	return label
 }
 
-// durationLabel formats the current item's duration.
+// durationLabel formats the current playback item's duration.
 func (m *Model) durationLabel() string {
-	if item, ok := m.queue.Current(); ok && item.Duration > 0 {
+	if item, ok := m.playbackItem(); ok && item.Duration > 0 {
 		return formatDuration(item.Duration)
 	}
 	return "--:--"
@@ -233,7 +226,7 @@ func (m *Model) progress() (plain, styled string) {
 	}
 
 	duration := time.Duration(0)
-	if item, ok := m.queue.Current(); ok {
+	if item, ok := m.playbackItem(); ok {
 		duration = item.Duration
 	}
 
