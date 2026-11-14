@@ -801,7 +801,7 @@ func TestMetadataProbeUpdatesQueueByIDAndHeader(t *testing.T) {
 	item.Path = "/music/song.mp3"
 	m.queue.Append(item)
 
-	cmd := m.probeItems()
+	cmd := m.probeItems(m.activeTab)
 	if cmd == nil {
 		t.Fatal("probeItems returned no command")
 	}
@@ -830,7 +830,7 @@ func TestMetadataProbeSkipsCUEAndDuplicates(t *testing.T) {
 		prober := &fakeProber{}
 		m, _ := newPlaylistModel(t, func(opts *Options) { opts.Prober = prober })
 		m.queue.Append(queue.Item{Path: "/music/album.flac", CuePath: "/music/album.cue", Title: "Track"})
-		if cmd := m.probeItems(); cmd != nil {
+		if cmd := m.probeItems(m.activeTab); cmd != nil {
 			t.Fatalf("probeItems returned a command for a CUE track")
 		}
 		if prober.callCount() != 0 {
@@ -846,13 +846,14 @@ func TestMetadataProbeSkipsCUEAndDuplicates(t *testing.T) {
 		m.queue.Append(item)
 		id := m.queue.Snapshot().Items[0].ID
 
-		if cmd := m.probeItems(); cmd == nil {
+		if cmd := m.probeItems(m.activeTab); cmd == nil {
 			t.Fatal("first probeItems returned nil")
 		}
-		if cmd := m.probeItems(); cmd != nil {
+		if cmd := m.probeItems(m.activeTab); cmd != nil {
 			t.Fatal("second probeItems scheduled a duplicate probe")
 		}
-		if path, ok := m.probing[id]; !ok || path != "/music/song.mp3" {
+		key := probeKey{tab: m.activeTab, id: id}
+		if path, ok := m.probing[key]; !ok || path != "/music/song.mp3" {
 			t.Errorf("in-flight probe = %q (ok=%v), want the item path", path, ok)
 		}
 	})
@@ -865,7 +866,7 @@ func TestFailedProbeIgnored(t *testing.T) {
 	item.Path = "/music/song.mp3"
 	m.queue.Append(item)
 
-	m = runCmd(t, m, m.probeItems())
+	m = runCmd(t, m, m.probeItems(m.activeTab))
 	if m.statusIsError {
 		t.Errorf("failed probe set an error status: %q", m.statusMsg)
 	}
@@ -1005,7 +1006,7 @@ func TestStaleProbeResultsIgnored(t *testing.T) {
 		m, _ := newPlaylistModel(t, nil)
 		m.queue.Append(queue.Item{Path: "/music/new.mp3", Title: "New", Duration: time.Minute})
 		id := m.queue.Snapshot().Items[0].ID
-		m.probing = map[uint64]string{id: "/music/new.mp3"}
+		m.probing = map[probeKey]string{{tab: 0, id: id}: "/music/new.mp3"}
 
 		cmd := m.applyQueueMetadata(queueMetadataMsg{
 			id:   id,
@@ -1018,7 +1019,8 @@ func TestStaleProbeResultsIgnored(t *testing.T) {
 		if got := m.queue.Snapshot().Items[0].Title; got != "New" {
 			t.Errorf("stale probe changed the reused item to %q", got)
 		}
-		if path, ok := m.probing[id]; !ok || path != "/music/new.mp3" {
+		key := probeKey{tab: 0, id: id}
+		if path, ok := m.probing[key]; !ok || path != "/music/new.mp3" {
 			t.Errorf("in-flight marker = %q (ok=%v), want the new path", path, ok)
 		}
 	})
@@ -1033,7 +1035,7 @@ func TestStaleProbeResultsIgnored(t *testing.T) {
 			Duration: time.Minute,
 		})
 		id := m.queue.Snapshot().Items[0].ID
-		m.probing = map[uint64]string{id: "/music/song.flac"}
+		m.probing = map[probeKey]string{{tab: 0, id: id}: "/music/song.flac"}
 
 		cmd := m.applyQueueMetadata(queueMetadataMsg{
 			id:   id,
@@ -1905,7 +1907,7 @@ func TestProbeItemsBoundsConcurrency(t *testing.T) {
 		m.queue.Append(queue.Item{Path: fmt.Sprintf("/music/%02d.mp3", i)})
 	}
 
-	cmd := m.probeItems()
+	cmd := m.probeItems(m.activeTab)
 	if cmd == nil {
 		t.Fatal("probeItems returned no command")
 	}

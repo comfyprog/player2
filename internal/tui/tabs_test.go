@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"player2/internal/meta"
 	"player2/internal/player"
 	"player2/internal/queue"
 )
@@ -468,6 +469,87 @@ func TestClearingNonSoundingTabKeepsPlayback(t *testing.T) {
 	}
 	if got := m.tabs[1].queue.Len(); got != 0 {
 		t.Errorf("cleared tab length = %d, want 0", got)
+	}
+}
+
+func TestQueueMetadataAppliesToRequestingTab(t *testing.T) {
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Config.RestoreQueue = false })
+	fillTab(t, m, 0, queue.Item{Path: "/music/zero.mp3", Title: "Zero"})
+	fillTab(t, m, 1, queue.Item{Path: "/music/one.mp3", Title: "One"})
+	m.probing = map[probeKey]string{
+		{tab: 0, id: 1}: "/music/zero.mp3",
+	}
+
+	cmd := m.applyQueueMetadata(queueMetadataMsg{
+		tab:  0,
+		id:   1,
+		path: "/music/zero.mp3",
+		info: meta.Info{Title: "Zero Probed", Duration: 2 * time.Minute},
+	})
+	if cmd == nil {
+		t.Fatal("metadata for the active tab did not schedule a save")
+	}
+	m = runCmd(t, m, cmd)
+
+	if got := m.tabs[0].queue.Snapshot().Items[0].Title; got != "Zero Probed" {
+		t.Errorf("tab 0 title = %q, want Zero Probed", got)
+	}
+	if got := m.tabs[1].queue.Snapshot().Items[0].Title; got != "One" {
+		t.Errorf("tab 1 title = %q, want One", got)
+	}
+}
+
+func TestEqualItemIDsInOtherTabAreNotUpdated(t *testing.T) {
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Config.RestoreQueue = false })
+	fillTab(t, m, 0, queue.Item{Path: "/music/zero.mp3", Title: "Zero"})
+	fillTab(t, m, 1, queue.Item{Path: "/music/one.mp3", Title: "One"})
+	m = runCmd(t, m, m.switchTab(1))
+	store := m.store.(*fakeStore)
+	savesBefore := store.saveCount()
+
+	cmd := m.applyQueueMetadata(queueMetadataMsg{
+		tab:  0,
+		id:   1,
+		path: "/music/zero.mp3",
+		info: meta.Info{Title: "Zero Probed"},
+	})
+	if cmd == nil {
+		t.Fatal("metadata for an inactive tab did not schedule a save")
+	}
+	m = runCmd(t, m, cmd)
+
+	if got := m.tabs[0].queue.Snapshot().Items[0].Title; got != "Zero Probed" {
+		t.Errorf("tab 0 title = %q, want Zero Probed", got)
+	}
+	if got := m.tabs[1].queue.Snapshot().Items[0].Title; got != "One" {
+		t.Errorf("tab 1 title = %q, want One", got)
+	}
+	if m.activeTab != 1 {
+		t.Errorf("activeTab = %d, want 1", m.activeTab)
+	}
+	if got := store.saveCount(); got <= savesBefore {
+		t.Errorf("saves = %d, want more than %d", got, savesBefore)
+	}
+}
+
+func TestSwitchingTabProbesThatTabsItems(t *testing.T) {
+	prober := &fakeProber{info: map[string]meta.Info{
+		"/music/one.mp3": {Title: "One Probed", Duration: time.Minute},
+	}}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Prober = prober })
+	fillTab(t, m, 0, queue.Item{Path: "/music/zero.mp3"})
+	fillTab(t, m, 1, queue.Item{Path: "/music/one.mp3"})
+
+	m = runCmd(t, m, m.switchTab(1))
+
+	if got := prober.callCount(); got != 1 {
+		t.Fatalf("probe calls = %d, want only tab 1's item", got)
+	}
+	if got := m.tabs[1].queue.Snapshot().Items[0].Title; got != "One Probed" {
+		t.Errorf("tab 1 title = %q, want One Probed", got)
+	}
+	if got := m.tabs[0].queue.Snapshot().Items[0].Title; got != "" {
+		t.Errorf("tab 0 title = %q, want untouched", got)
 	}
 }
 

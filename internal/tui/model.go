@@ -144,9 +144,9 @@ type Model struct {
 	saveMu    sync.Mutex
 	flushed   bool
 
-	// probing tracks metadata probes currently in flight, keyed by item ID;
-	// the value is the probed path so reused IDs cannot be mistaken.
-	probing map[uint64]string
+	// probing tracks metadata probes currently in flight, keyed by tab and
+	// item ID; the value is the probed path so reused IDs cannot be mistaken.
+	probing map[probeKey]string
 
 	// probeSem bounds concurrent metadata probes. Bubble Tea runs each command
 	// in its own goroutine, so a shared semaphore prevents a large add/restore
@@ -209,7 +209,7 @@ func New(opts Options) *Model {
 		lastVolume:     cfg.Volume,
 		statusMsg:      "ready",
 		styles:         NewStyles(cfg.Colors),
-		probing:        make(map[uint64]string),
+		probing:        make(map[probeKey]string),
 		browserMeta:    make(map[string]meta.Info),
 		browserProbing: make(map[browserProbeKey]struct{}),
 		probeSem:       make(chan struct{}, probeConcurrency),

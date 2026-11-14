@@ -769,7 +769,7 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 
 	// A replacement queue starts with fresh item IDs.
 	m.clearPreview()
-	m.probing = make(map[uint64]string)
+	m.clearTabProbes(m.activeTab)
 	m.queue.Replace(msg.items...)
 	selected := msg.selected
 	if selected < 0 || selected >= len(msg.items) {

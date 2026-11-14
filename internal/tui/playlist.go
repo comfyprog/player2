@@ -72,12 +72,20 @@ type queueSavedMsg struct {
 	err error
 }
 
-// queueMetadataMsg carries probed metadata for one queue item.
+// queueMetadataMsg carries probed metadata for one queue item in one tab.
 type queueMetadataMsg struct {
+	tab  int
 	id   uint64
 	path string
 	info meta.Info
 	err  error
+}
+
+// probeKey identifies an in-flight probe by tab and item ID. IDs restart at 1
+// in every tab, so the tab index is part of the identity.
+type probeKey struct {
+	tab int
+	id  uint64
 }
 
 // probeConcurrency bounds how many metadata probes may run at once.
@@ -186,7 +194,7 @@ func (m *Model) switchTab(index int) tea.Cmd {
 	} else {
 		m.setStatusOK(fmt.Sprintf("tab %d: %d item(s)", index, count))
 	}
-	return m.probeItems()
+	return m.probeItems(index)
 }
 
 // queueCurrentIndex returns the index of q's current item, or 0 when there is
@@ -854,7 +862,7 @@ func (m *Model) playlistClear() tea.Cmd {
 	}
 	m.playlistSelected = 0
 	m.playlistOffset = 0
-	m.probing = make(map[uint64]string)
+	m.clearTabProbes(m.activeTab)
 	m.setStatusOK("queue cleared")
 	if stop == nil {
 		return m.saveQueue()
@@ -1004,7 +1012,7 @@ func (m *Model) applyQueueSaved(msg queueSavedMsg) tea.Cmd {
 // afterQueueChange schedules metadata probes and a coalesced, single-flight
 // save after the queue contents changed.
 func (m *Model) afterQueueChange() tea.Cmd {
-	return tea.Batch(m.probeItems(), m.saveQueue())
+	return tea.Batch(m.probeItems(m.activeTab), m.saveQueue())
 }
 
 // needsProbe reports whether a plain audio item lacks a duration or usable
@@ -1029,50 +1037,64 @@ func usableTitle(item queue.Item) bool {
 	return item.Title != base
 }
 
-// probeItems starts one asynchronous probe per eligible item. IDs already in
-// flight are skipped so a mutation cannot schedule the same probe twice.
-func (m *Model) probeItems() tea.Cmd {
-	if m.prober == nil {
+// probeItems starts one asynchronous probe per eligible item in tab. Probes
+// already in flight for the same tab and item are skipped so a mutation cannot
+// schedule the same probe twice.
+func (m *Model) probeItems(tab int) tea.Cmd {
+	if m.prober == nil || tab < 0 || tab >= tabCount {
 		return nil
 	}
 	if m.probing == nil {
-		m.probing = make(map[uint64]string)
+		m.probing = make(map[probeKey]string)
 	}
 	if m.probeSem == nil {
 		m.probeSem = make(chan struct{}, probeConcurrency)
 	}
 
 	var cmds []tea.Cmd
-	for _, item := range m.queue.Snapshot().Items {
-		if _, inFlight := m.probing[item.ID]; inFlight || !m.needsProbe(item) {
+	for _, item := range m.tabs[tab].queue.Snapshot().Items {
+		key := probeKey{tab: tab, id: item.ID}
+		if _, inFlight := m.probing[key]; inFlight || !m.needsProbe(item) {
 			continue
 		}
-		m.probing[item.ID] = item.Path
+		m.probing[key] = item.Path
 		id, path, prober, sem := item.ID, item.Path, m.prober, m.probeSem
 		cmds = append(cmds, func() tea.Msg {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			info, err := prober.Probe(context.Background(), path)
-			return queueMetadataMsg{id: id, path: path, info: info, err: err}
+			return queueMetadataMsg{tab: tab, id: id, path: path, info: info, err: err}
 		})
 	}
 	return tea.Batch(cmds...)
 }
 
-// applyQueueMetadata applies non-zero probed fields to the item with the given
-// ID. Results for removed, replaced, reused, or CUE items are ignored.
-func (m *Model) applyQueueMetadata(msg queueMetadataMsg) tea.Cmd {
-	// Clear the in-flight marker only when it still belongs to this probe;
-	// Restore can reuse an ID for a different item.
-	if path, ok := m.probing[msg.id]; ok && path == msg.path {
-		delete(m.probing, msg.id)
+// clearTabProbes forgets in-flight probes for one tab after its queue is
+// replaced or cleared.
+func (m *Model) clearTabProbes(tab int) {
+	for key := range m.probing {
+		if key.tab == tab {
+			delete(m.probing, key)
+		}
 	}
-	if msg.err != nil {
+}
+
+// applyQueueMetadata applies non-zero probed fields to the item with the given
+// tab and ID. Results for removed, replaced, reused, or CUE items are ignored.
+func (m *Model) applyQueueMetadata(msg queueMetadataMsg) tea.Cmd {
+	key := probeKey{tab: msg.tab, id: msg.id}
+	// Clear the in-flight marker only when it still belongs to this probe;
+	// restore can reuse an ID for a different item.
+	if path, ok := m.probing[key]; ok && path == msg.path {
+		delete(m.probing, key)
+	}
+	if msg.err != nil || msg.tab < 0 || msg.tab >= tabCount {
 		return nil
 	}
 
+	q := m.tabs[msg.tab].queue
 	found := false
-	for _, item := range m.queue.Snapshot().Items {
+	for _, item := range q.Snapshot().Items {
 		if item.ID == msg.id && item.Path == msg.path && item.CuePath == "" {
 			found = true
 			break
@@ -1084,7 +1106,7 @@ func (m *Model) applyQueueMetadata(msg queueMetadataMsg) tea.Cmd {
 
 	info := msg.info
 	changed := false
-	m.queue.Update(msg.id, func(item *queue.Item) {
+	q.Update(msg.id, func(item *queue.Item) {
 		if info.Title != "" && item.Title != info.Title {
 			item.Title = info.Title
 			changed = true
@@ -1178,7 +1200,7 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 	m.playlistOffset = m.tabs[m.activeTab].offset
 	m.playbackTab = -1
 	m.restorePending = false
-	m.probing = make(map[uint64]string)
+	m.probing = make(map[probeKey]string)
 	m.clampPlaylist()
 
 	status := fmt.Sprintf("restored %d item(s) in %d tab(s)", items, nonEmpty)
@@ -1191,7 +1213,7 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 	if msg.skipped > 0 {
 		cmds = append(cmds, m.saveQueue())
 	}
-	cmds = append(cmds, m.probeItems())
+	cmds = append(cmds, m.probeItems(m.activeTab))
 	return tea.Batch(cmds...)
 }
 
