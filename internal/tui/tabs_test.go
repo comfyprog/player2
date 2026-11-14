@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -581,5 +582,226 @@ func TestRemovingCurrentFromNonSoundingTabKeepsPlayback(t *testing.T) {
 	}
 	if got := m.tabs[1].queue.Len(); got != 1 {
 		t.Errorf("edited tab length = %d, want 1", got)
+	}
+}
+
+func TestStaleGenerationEventIgnored(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.activeTab = 1
+	m.queue = m.tabs[1].queue
+	m.playbackTab = 1
+	m.playbackGen = 2
+	current, _ := m.tabs[1].queue.Current()
+
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: current.ID, Generation: 1},
+		ok:    true,
+	})
+	if cmd != nil {
+		t.Fatalf("stale generation returned command %T, want nil", cmd)
+	}
+	if got := m.tabs[1].queue.Snapshot().Current; got != 0 {
+		t.Errorf("stale generation advanced the tab to %d", got)
+	}
+
+	cmd = m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: current.ID, Generation: 2},
+		ok:    true,
+	})
+	m = runCmd(t, m, cmd)
+	if got := m.tabs[1].queue.Snapshot().Current; got != 1 {
+		t.Errorf("current after matching generation = %d, want 1", got)
+	}
+}
+
+func TestPendingPlayDoesNotConsumeOldTabEvent(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.activeTab = 1
+	m.queue = m.tabs[1].queue
+	m.playlistSelected = 0
+	m.playbackTab = 0
+	m.playbackGen = 1
+	m.transportBusy = true
+	m.transportSeq = 1
+
+	next, ok := m.tabs[1].queue.Current()
+	if !ok {
+		t.Fatal("tab 1 has no current item")
+	}
+	if cmd := m.playItem(1, next, "playing One One"); cmd != nil {
+		t.Fatalf("play while busy returned command %T, want a pending action", cmd)
+	}
+	if m.playbackTab != 0 {
+		t.Fatalf("playbackTab = %d before the Play starts, want 0", m.playbackTab)
+	}
+
+	old, _ := m.tabs[0].queue.Current()
+	m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: old.ID, Generation: 1},
+		ok:    true,
+	})
+	if got := m.tabs[1].queue.Snapshot().Current; got != 0 {
+		t.Errorf("old tab event advanced pending tab to %d", got)
+	}
+	if m.playbackTab != 0 {
+		t.Errorf("old tab event changed playbackTab to %d", m.playbackTab)
+	}
+
+	// Simulate the queued Play succeeding on a new stream generation. The
+	// fake's counter must advance with the status so the pending dispatch
+	// produces generation 2.
+	fp.mu.Lock()
+	fp.generation = 1
+	fp.status.Generation = 1
+	fp.mu.Unlock()
+	m = runCmd(t, m, m.applyTransportResult(transportResultMsg{
+		seq:  m.transportSeq,
+		kind: transportPlay,
+		tab:  1,
+	}))
+	if m.playbackTab != 1 {
+		t.Errorf("playbackTab = %d after Play result, want 1", m.playbackTab)
+	}
+	if m.playbackGen != 2 {
+		t.Errorf("playbackGen = %d after Play result, want 2", m.playbackGen)
+	}
+
+	// A late event from tab 0's old stream must still be rejected.
+	m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: old.ID, Generation: 1},
+		ok:    true,
+	})
+	if got := m.tabs[1].queue.Snapshot().Current; got != 0 {
+		t.Errorf("late tab 0 event advanced tab 1 to %d", got)
+	}
+}
+
+func TestPlayErrorClearsSoundingContext(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.activeTab = 1
+	m.queue = m.tabs[1].queue
+	m.playlistSelected = 0
+	m.playbackTab = 0
+	m.playbackGen = 1
+	m.transportBusy = true
+	m.transportSeq = 2
+
+	m = runCmd(t, m, m.applyTransportResult(transportResultMsg{
+		seq:  m.transportSeq,
+		kind: transportPlay,
+		tab:  1,
+		err:  errors.New("decoder failed"),
+	}))
+	if m.playbackTab != -1 || m.playbackGen != 0 {
+		t.Errorf("failed Play left context tab/gen = %d/%d, want -1/0", m.playbackTab, m.playbackGen)
+	}
+	if !m.statusIsError || !strings.Contains(m.statusMsg, "decoder failed") {
+		t.Errorf("status = %q (error=%v), want decoder failure", m.statusMsg, m.statusIsError)
+	}
+
+	next, cmd := pressForCmd(t, m, runeKey('n'))
+	m = runCmd(t, next, cmd)
+	if got := m.tabs[1].queue.Snapshot().Current; got != 1 {
+		t.Errorf("tab 1 current after next = %d, want 1", got)
+	}
+	if got := m.tabs[0].queue.Snapshot().Current; got != 0 {
+		t.Errorf("tab 0 current after failed Play + next = %d, want 0", got)
+	}
+	if m.playbackTab != 1 {
+		t.Errorf("playbackTab = %d after next, want 1", m.playbackTab)
+	}
+	if len(fp.played) != 1 || fp.played[0].Title != "One Two" {
+		t.Errorf("played = %#v, want One Two", fp.played)
+	}
+}
+
+func TestSeekErrorClearsSoundingContext(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.playbackTab = 0
+	m.playbackGen = 1
+	m.transportBusy = true
+	m.transportSeq = 3
+
+	m = runCmd(t, m, m.applyTransportResult(transportResultMsg{
+		seq:  m.transportSeq,
+		kind: transportSeek,
+		err:  errors.New("seek failed"),
+	}))
+	if m.playbackTab != -1 || m.playbackGen != 0 {
+		t.Errorf("failed seek left context tab/gen = %d/%d, want -1/0", m.playbackTab, m.playbackGen)
+	}
+	if !m.statusIsError || !strings.Contains(m.statusMsg, "seek failed") {
+		t.Errorf("status = %q (error=%v), want seek failure", m.statusMsg, m.statusIsError)
+	}
+}
+
+func TestHiddenTabErrorNamesTab(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1, playlistItem("One One", "", 1, time.Minute))
+	m.activeTab = 1
+	m.queue = m.tabs[1].queue
+	m.playbackTab = 0
+	m.playbackGen = 1
+
+	current, _ := m.tabs[0].queue.Current()
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{
+			Type:       player.EventError,
+			ItemID:     current.ID,
+			Generation: 1,
+			Err:        errors.New("decoder died"),
+		},
+		ok: true,
+	})
+	if cmd != nil {
+		t.Errorf("error event returned command %T, want nil", cmd)
+	}
+	if !m.statusIsError || !strings.Contains(m.statusMsg, "tab 0") ||
+		!strings.Contains(m.statusMsg, "decoder died") {
+		t.Errorf("status = %q (error=%v), want tab 0 and decoder died", m.statusMsg, m.statusIsError)
+	}
+}
+
+func TestHeaderModesLabelVisibleTabDuringHiddenPlayback(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0, playlistItem("Zero", "", 1, time.Minute))
+	fillTab(t, m, 1, playlistItem("One", "", 1, time.Minute))
+	m.activeTab = 1
+	m.queue = m.tabs[1].queue
+	m.playbackTab = 0
+	m.playbackGen = 1
+	m.status = player.Status{State: player.StatePlaying, Volume: 70, Generation: 1}
+	fp.status = m.status
+
+	header := ansi.Strip(m.headerLine())
+	if !strings.Contains(header, "R:off") || !strings.Contains(header, "S:off") {
+		t.Fatalf("header lacks modes: %q", header)
+	}
+	if !strings.Contains(header, "(tab 1)") {
+		t.Errorf("header does not identify visible-tab modes: %q", header)
 	}
 }

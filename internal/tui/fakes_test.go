@@ -20,6 +20,7 @@ import (
 type fakePlayer struct {
 	mu         sync.Mutex
 	status     player.Status
+	generation uint64
 	events     chan player.Event
 	played     []queue.Item
 	pauses     int
@@ -41,6 +42,8 @@ func (p *fakePlayer) Play(item queue.Item) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.played = append(p.played, item)
+	p.generation++
+	p.status.Generation = p.generation
 	p.status.State = player.StatePlaying
 	p.status.Position = 0
 	return nil
@@ -62,6 +65,8 @@ func (p *fakePlayer) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stops++
+	p.generation++
+	p.status.Generation = p.generation
 	p.status.State = player.StateStopped
 	p.status.Position = 0
 }
@@ -70,6 +75,10 @@ func (p *fakePlayer) SeekBy(delta time.Duration) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.seekDeltas = append(p.seekDeltas, delta)
+	if p.seekErr == nil {
+		p.generation++
+		p.status.Generation = p.generation
+	}
 	return p.seekErr
 }
 

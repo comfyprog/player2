@@ -38,6 +38,7 @@ const (
 // clear the preview state instead of leaving it stuck.
 type transportAction struct {
 	kind    transportKind
+	tab     int
 	item    queue.Item
 	status  string
 	delta   time.Duration
@@ -49,11 +50,13 @@ type transportAction struct {
 // operation. seq identifies the request so a stale result cannot apply its
 // status over a newer request.
 type transportResultMsg struct {
-	seq    uint64
-	kind   transportKind
-	status string
-	delta  time.Duration
-	err    error
+	seq        uint64
+	kind       transportKind
+	tab        int
+	generation uint64
+	status     string
+	delta      time.Duration
+	err        error
 }
 
 // queueRestoredMsg is the result of loading saved playlist tabs. epoch records
@@ -471,15 +474,14 @@ func (m *Model) selectPlaylistLast() {
 	m.clampPlaylist()
 }
 
-// playItem queues a Play request and makes tab the sounding tab. Play opens a
-// decoder and may block, so it never runs inside Update.
+// playItem queues a Play request for tab. The sounding tab changes only when
+// the Play result confirms that the new stream started. Play opens a decoder
+// and may block, so it never runs inside Update.
 func (m *Model) playItem(tab int, item queue.Item, status string) tea.Cmd {
 	m.clearPreview()
-	if tab >= 0 && tab < tabCount {
-		m.playbackTab = tab
-	}
 	return m.requestTransport(transportAction{
 		kind:   transportPlay,
+		tab:    tab,
 		item:   item,
 		status: status,
 	})
@@ -533,14 +535,21 @@ func (m *Model) dispatchTransport(action transportAction) tea.Cmd {
 		result := transportResultMsg{
 			seq:    action.seq,
 			kind:   action.kind,
+			tab:    action.tab,
 			status: action.status,
 			delta:  action.delta,
 		}
 		switch action.kind {
 		case transportPlay:
 			result.err = player.Play(action.item)
+			if result.err == nil && !action.preview {
+				result.generation = player.Status().Generation
+			}
 		case transportSeek:
 			result.err = player.SeekBy(action.delta)
+			if result.err == nil {
+				result.generation = player.Status().Generation
+			}
 		case transportStop:
 			player.Stop()
 		}
@@ -614,6 +623,7 @@ func (m *Model) actionStop() tea.Cmd {
 	if m.player == nil {
 		m.clearPreview()
 		m.playbackTab = -1
+		m.playbackGen = 0
 		m.beginPlaybackIntent()
 		return nil
 	}
@@ -828,6 +838,7 @@ func (m *Model) playlistRemove() tea.Cmd {
 	var stop tea.Cmd
 	if hadPrevious && removed.ID == previous.ID && !m.previewActive && m.activeOwnsPlayback() {
 		m.playbackTab = -1
+		m.playbackGen = 0
 		stop = m.requestTransport(transportAction{kind: transportStop})
 	}
 	m.clampPlaylist()
@@ -858,6 +869,7 @@ func (m *Model) playlistClear() tea.Cmd {
 	var stop tea.Cmd
 	if !m.previewActive && m.activeOwnsPlayback() {
 		m.playbackTab = -1
+		m.playbackGen = 0
 		stop = m.requestTransport(transportAction{kind: transportStop})
 	}
 	m.playlistSelected = 0
@@ -879,6 +891,16 @@ func (m *Model) bumpQueueEpoch() {
 	m.restorePending = false
 }
 
+// resultGeneration returns the stream generation captured by the transport
+// command, falling back to the cached status for test doubles that do not
+// populate it.
+func (m *Model) resultGeneration(msg transportResultMsg) uint64 {
+	if msg.generation != 0 {
+		return msg.generation
+	}
+	return m.status.Generation
+}
+
 // applyTransportResult applies the outcome of one serialized transport
 // operation and then starts the pending request, if any. Status and cached
 // player state are only refreshed when this result belongs to the latest
@@ -891,9 +913,15 @@ func (m *Model) applyTransportResult(msg transportResultMsg) tea.Cmd {
 		case msg.err != nil:
 			if msg.kind == transportPlay {
 				m.clearPreview()
+				m.playbackTab = -1
+				m.playbackGen = 0
 			}
 			switch msg.kind {
 			case transportSeek:
+				// SeekBy stops the old stream before opening the new one, so a
+				// failure leaves no queue owning playback.
+				m.playbackTab = -1
+				m.playbackGen = 0
 				m.setStatusError("seek: " + msg.err.Error())
 			default:
 				m.setStatusError("play: " + msg.err.Error())
@@ -902,10 +930,17 @@ func (m *Model) applyTransportResult(msg transportResultMsg) tea.Cmd {
 			m.refresh()
 			switch msg.kind {
 			case transportSeek:
+				m.playbackGen = m.resultGeneration(msg)
 				m.setStatusOK(fmt.Sprintf("seek %+ds", int(msg.delta/time.Second)))
 			case transportStop:
+				m.playbackTab = -1
+				m.playbackGen = 0
 				m.setStatusOK("stopped")
 			default:
+				if msg.tab >= 0 && msg.tab < tabCount {
+					m.playbackTab = msg.tab
+					m.playbackGen = m.resultGeneration(msg)
+				}
 				status := msg.status
 				if status == "" {
 					status = "playing"
@@ -1199,6 +1234,7 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 	m.playlistSelected = m.tabs[m.activeTab].selected
 	m.playlistOffset = m.tabs[m.activeTab].offset
 	m.playbackTab = -1
+	m.playbackGen = 0
 	m.restorePending = false
 	m.probing = make(map[probeKey]string)
 	m.clampPlaylist()
@@ -1242,11 +1278,22 @@ func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 	if cmd, handled := m.handlePreviewEvent(msg); handled {
 		return cmd
 	}
+	// A user transport request is replacing the stream. Ignore terminal events
+	// from the old stream so auto-advance cannot race a pending Play/Seek/Stop.
+	if m.transportBusy || m.pendingTransport != nil {
+		return nil
+	}
 	// Match against the sounding tab, not the visible one. Item IDs restart at
 	// 1 in every queue, so comparing against the visible tab could consume an
 	// event that belongs elsewhere.
 	tab := m.playbackTab
 	if tab < 0 || tab >= tabCount {
+		return nil
+	}
+	// A stale event from a replaced stream must not advance the new stream even
+	// when both use the same item ID. Generation 0 is used by test doubles and
+	// legacy events, which fall back to item-ID matching.
+	if m.playbackGen != 0 && msg.event.Generation != 0 && msg.event.Generation != m.playbackGen {
 		return nil
 	}
 	q := m.tabs[tab].queue
@@ -1263,6 +1310,7 @@ func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 		item, ok := q.Next(true)
 		if !ok {
 			m.playbackTab = -1
+			m.playbackGen = 0
 			m.clampTabSelection(tab)
 			m.setStatusOK(m.queueEndStatus(tab, "end of queue"))
 			return nil
@@ -1276,7 +1324,7 @@ func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 		if err == nil {
 			err = errors.New("playback error")
 		}
-		m.setStatusError("playback: " + err.Error())
+		m.setStatusError(m.queueEndStatus(tab, "playback: "+err.Error()))
 	}
 	return nil
 }

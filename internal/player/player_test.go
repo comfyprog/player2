@@ -1097,3 +1097,35 @@ func TestFFmpegDecodeToFinished(t *testing.T) {
 		t.Errorf("position = %v, want >0 and <=300ms", st.Position)
 	}
 }
+
+func TestEventGenerationIdentifiesTheStream(t *testing.T) {
+	pcm := bytes.Repeat([]byte{0x11, 0x22}, bytesPerSecond/2)
+	dec := &fakeDecoder{openFn: func(audio.Request) audio.Stream {
+		return newFakeStream(bytes.Clone(pcm), nil)
+	}}
+	sink := &fakeSink{}
+	p := mustNew(t, dec, sink, Options{})
+	item := queue.Item{ID: 1, Path: "/music/one.wav", Title: "one", Duration: time.Second}
+
+	if err := p.Play(item); err != nil {
+		t.Fatalf("first Play() error = %v", err)
+	}
+	first := p.Status().Generation
+	if first == 0 {
+		t.Fatal("Status().Generation = 0 after Play")
+	}
+	consume(t, sink, len(pcm))
+	ev := waitEvent(t, p)
+	if ev.Generation != first {
+		t.Errorf("event generation = %d, want %d", ev.Generation, first)
+	}
+
+	if err := p.Play(item); err != nil {
+		t.Fatalf("second Play() error = %v", err)
+	}
+	second := p.Status().Generation
+	if second == first {
+		t.Errorf("generation did not advance across Play calls: %d", second)
+	}
+	p.Stop()
+}

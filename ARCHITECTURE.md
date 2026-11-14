@@ -241,8 +241,9 @@ Key semantics:
   `streamBase=target`. A seek to the end finishes through the monitor.
 - `Stop` retains the item but resets position and state. `Close` is idempotent and
   closes the event channel only after the monitor and decoder have stopped.
-- `Event` carries `Type` (`finished`/`error`), `Err`, and `ItemID`. The TUI uses
-  `ItemID` to ignore events from a stream that is no longer current.
+- `Event` carries `Type` (`finished`/`error`), `Err`, `ItemID`, and the stream
+  `Generation`. The TUI uses both identity fields to ignore events from a
+  stream that is no longer current.
 
 Stream lifecycle ordering is important: cancel/close the old stream, wait for its
 decoder `done`, then Abort/Reset the ring. This prevents a writer still blocked in
@@ -422,7 +423,9 @@ remaining rows are the visible tab's items.
 The model distinguishes the **visible tab** (what the playlist pane edits) from
 the **sounding tab** (which queue owns the player's stream). Switching tabs
 only changes the visible tab. `playbackTab` is -1 when no queue owns the
-stream; starting a queue item sets it, explicit stop and end-of-queue clear it.
+stream; it is set when a Play result confirms the new stream started, and
+explicit stop, Play failure, and end-of-queue clear it. `playbackGen` records
+the player stream generation so events from a replaced stream are ignored.
 
 Minimum terminal size is 60×10; below it the view renders a clear “terminal too
 small” message. Rendering builds plain, width-checked rows with
@@ -494,9 +497,15 @@ built-in defaults.
   dispatched only after the current one returns.
 - Finished/error events are consumed through a `tea.Cmd` waiting on the player's
   event channel. Auto-advance happens only for a `finished` event whose `ItemID`
-  matches the sounding tab's current item; equal IDs in other tabs are ignored.
-  Repeat-one replays the item, repeat-all wraps, repeat-off at the end stops
-  advancing. Errors set a status error.
+  matches the sounding tab's current item and whose stream `Generation` matches
+  the last successful Play/Seek; equal IDs in other tabs are ignored. Events are
+  also ignored while a transport operation is busy or pending, so a late event
+  from the old stream cannot replace the user's new Play/Seek/Stop. Repeat-one
+  replays the item, repeat-all wraps, repeat-off at the end stops advancing.
+  Errors set a status error, prefixed with the tab number when the failing tab
+  is not visible.
+- The header's `R:`/`S:` labels describe the visible tab and gain a `(tab N)`
+  suffix when a different tab owns the sound.
 - Plain audio metadata is probed asynchronously for items lacking duration/title;
   CUE tracks are not probed. Probes are deduplicated by `(tab, item ID)` and path
   and bounded to four concurrent `ffprobe` processes per model. The active tab is

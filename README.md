@@ -173,8 +173,9 @@ tab that owns the current sound is marked with `▶`.
 - Switching tabs does not interrupt playback. While audio is playing or paused,
   next/previous and automatic advance follow the tab that started the stream.
   The header keeps showing that item and adds `[tab N]` when another tab is
-  visible. Explicit stop clears the sounding context; after that, transport
-  falls back to the visible tab.
+  visible. The header's `R:`/`S:` modes always describe the visible tab; when
+  another tab is sounding they carry a `(tab N)` label. Explicit stop clears
+  the sounding context; after that, transport falls back to the visible tab.
 - `g` jumps to the sounding tab when it is not visible, selects its current
   item, and leaves playback alone.
 - All ten tab queues, their shuffle/repeat settings, and the visible tab are

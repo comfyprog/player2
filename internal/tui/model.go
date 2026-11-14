@@ -101,6 +101,7 @@ type Model struct {
 	tabs        [tabCount]playlistTab
 	activeTab   int
 	playbackTab int
+	playbackGen uint64
 	queue       *queue.Queue
 
 	// status caches the last player snapshot so rendering never calls into

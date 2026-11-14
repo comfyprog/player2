@@ -52,12 +52,14 @@ const (
 	StatePaused
 )
 
-// Status is a snapshot of the player.
+// Status is a snapshot of the player. Generation identifies the current or
+// most recently started stream; it changes on every Play and Seek.
 type Status struct {
-	State    State
-	Position time.Duration
-	Volume   int
-	Err      error
+	State      State
+	Position   time.Duration
+	Volume     int
+	Generation uint64
+	Err        error
 }
 
 // EventType distinguishes playback events.
@@ -70,12 +72,14 @@ const (
 )
 
 // Event reports that the current stream finished or failed. ItemID identifies
-// the queue item the event belongs to so a late event from a replaced stream
-// cannot advance a newer item.
+// the queue item the event belongs to, and Generation identifies the stream so
+// a late event from a replaced stream cannot advance a newer item even when the
+// two streams use the same item ID.
 type Event struct {
-	Type   EventType
-	ItemID uint64
-	Err    error
+	Type       EventType
+	ItemID     uint64
+	Generation uint64
+	Err        error
 }
 
 // Options configures the PCM ring and decoder output format. Non-positive
@@ -404,10 +408,11 @@ func (p *Player) Status() Status {
 	p.ctrl.Lock()
 	defer p.ctrl.Unlock()
 	return Status{
-		State:    p.state,
-		Position: p.currentPositionLocked(),
-		Volume:   p.volume,
-		Err:      p.err,
+		State:      p.state,
+		Position:   p.currentPositionLocked(),
+		Volume:     p.volume,
+		Generation: p.gen,
+		Err:        p.err,
 	}
 }
 
@@ -586,7 +591,7 @@ func (p *Player) tickLocked() (Event, bool) {
 	// position is always the exact item duration.
 	if p.item.Duration > 0 && pos >= p.item.Duration {
 		p.completeLocked(p.item.Duration)
-		return Event{Type: EventFinished, ItemID: p.item.ID}, true
+		return Event{Type: EventFinished, ItemID: p.item.ID, Generation: st.gen}, true
 	}
 
 	if done && decErr != nil {
@@ -595,7 +600,7 @@ func (p *Player) tickLocked() (Event, bool) {
 		}
 		p.err = decErr
 		p.completeLocked(pos)
-		return Event{Type: EventError, ItemID: p.item.ID, Err: decErr}, true
+		return Event{Type: EventError, ItemID: p.item.ID, Generation: st.gen, Err: decErr}, true
 	}
 
 	// Unknown duration, or a file shorter than its metadata: the track ends
@@ -609,7 +614,7 @@ func (p *Player) tickLocked() (Event, bool) {
 			final = p.item.Duration
 		}
 		p.completeLocked(final)
-		return Event{Type: EventFinished, ItemID: p.item.ID}, true
+		return Event{Type: EventFinished, ItemID: p.item.ID, Generation: st.gen}, true
 	}
 
 	return Event{}, false

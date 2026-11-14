@@ -56,10 +56,12 @@ func (m *Model) startPreview(entry library.Entry) tea.Cmd {
 	m.previewItem = item
 	m.previewActive = true
 	m.playbackTab = -1
+	m.playbackGen = 0
 	m.beginPlaybackIntent()
 
 	play := m.requestTransport(transportAction{
 		kind:    transportPlay,
+		tab:     -1,
 		item:    item,
 		status:  "previewing " + displayTitle(item),
 		preview: true,
@@ -186,6 +188,7 @@ func (m *Model) beginPlaybackIntent() uint64 {
 func (m *Model) stopPlayback() tea.Cmd {
 	m.clearPreview()
 	m.playbackTab = -1
+	m.playbackGen = 0
 	m.beginPlaybackIntent()
 	return m.requestTransport(transportAction{kind: transportStop})
 }

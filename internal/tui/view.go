@@ -112,7 +112,12 @@ func (m *Model) headerLine() string {
 	}
 
 	parts = append(parts, "vol "+strconv.Itoa(m.volume()))
-	parts = append(parts, "R:"+m.repeatLabel(), "S:"+m.shuffleLabel())
+	modes := "R:" + m.repeatLabel() + " S:" + m.shuffleLabel()
+	if m.playbackTab >= 0 && m.playbackTab < tabCount && m.playbackTab != m.activeTab {
+		// R/S belong to the visible tab; name it when another tab is sounding.
+		modes += fmt.Sprintf(" (tab %d)", m.activeTab)
+	}
+	parts = append(parts, modes)
 
 	plain := strings.Join(parts, " ─ ")
 	return m.styles.Header.Render(fitPlain(plain, m.width))
