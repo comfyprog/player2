@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -90,11 +91,11 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read queue: %v", err)
 	}
-	if !strings.Contains(string(data), `"version":1`) {
-		t.Errorf("queue file has no version 1 marker: %s", data)
+	if !strings.Contains(string(data), `"version":2`) {
+		t.Errorf("queue file has no version 2 marker: %s", data)
 	}
-	if !strings.Contains(string(data), `"queue":`) {
-		t.Errorf("queue file has no queue object: %s", data)
+	if !strings.Contains(string(data), `"tabs":`) {
+		t.Errorf("queue file has no tabs array: %s", data)
 	}
 
 	got, skipped, err := s.Load()
@@ -139,7 +140,7 @@ func TestLoadInvalidData(t *testing.T) {
 	}{
 		{"empty", ""},
 		{"truncated", `{"version":1`},
-		{"wrong version", `{"version":2,"queue":{"items":[],"current":-1}}`},
+		{"wrong version", `{"version":3,"queue":{"items":[],"current":-1}}`},
 		{"missing version", `{"queue":{"items":[],"current":-1}}`},
 		{"wrong queue type", `{"version":1,"queue":"not an object"}`},
 	}
@@ -454,5 +455,203 @@ func TestSaveCleansUpTempOnRenameFailure(t *testing.T) {
 		if entry.Name() != "queue.json" {
 			t.Errorf("temporary file left behind: %q", entry.Name())
 		}
+	}
+}
+
+func saveTabsAndLoad(t *testing.T, path string, active int, tabs []queue.Snapshot) (int, []queue.Snapshot, int) {
+	t.Helper()
+	if err := New(path).SaveTabs(active, tabs); err != nil {
+		t.Fatalf("SaveTabs: %v", err)
+	}
+	gotActive, gotTabs, skipped, err := New(path).LoadTabs()
+	if err != nil {
+		t.Fatalf("LoadTabs: %v", err)
+	}
+	return gotActive, gotTabs, skipped
+}
+
+func TestSaveTabsLoadTabsRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	audioA := filepath.Join(dir, "a.mp3")
+	audioB := filepath.Join(dir, "b.flac")
+	audioC := filepath.Join(dir, "c.ogg")
+	for _, path := range []string{audioA, audioB, audioC} {
+		writeFile(t, path, "audio")
+	}
+
+	path := filepath.Join(dir, "state", "queue.json")
+	tabs := []queue.Snapshot{
+		{
+			Items:   []queue.Item{{ID: 7, Path: audioA, Title: "A", Duration: time.Minute}},
+			Current: 0,
+			Shuffle: true,
+			Repeat:  queue.RepeatAll,
+		},
+		{
+			Items:   []queue.Item{{ID: 9, Path: audioB, Title: "B", Duration: 2 * time.Minute}},
+			Current: 0,
+			Repeat:  queue.RepeatOne,
+		},
+		{
+			Items:   []queue.Item{{ID: 11, Path: audioC, Title: "C"}},
+			Current: 0,
+		},
+	}
+	before := make([]queue.Snapshot, len(tabs))
+	for i := range tabs {
+		before[i] = tabs[i]
+		before[i].Items = append([]queue.Item(nil), tabs[i].Items...)
+	}
+
+	if err := New(path).SaveTabs(1, tabs); err != nil {
+		t.Fatalf("SaveTabs: %v", err)
+	}
+	if !reflect.DeepEqual(tabs, before) {
+		t.Errorf("SaveTabs mutated its input:\n got %+v\nwant %+v", tabs, before)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat queue: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("queue mode = %o, want 600", perm)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read queue: %v", err)
+	}
+	for _, marker := range []string{`"version":2`, `"active_tab":1`, `"tabs":`} {
+		if !strings.Contains(string(data), marker) {
+			t.Errorf("queue file missing %s: %s", marker, data)
+		}
+	}
+
+	active, got, skipped := saveTabsAndLoad(t, path, 1, tabs)
+	if skipped != 0 {
+		t.Errorf("skipped = %d, want 0", skipped)
+	}
+	if active != 1 {
+		t.Errorf("active = %d, want 1", active)
+	}
+	if !reflect.DeepEqual(got, tabs) {
+		t.Errorf("LoadTabs did not roundtrip:\n got %+v\nwant %+v", got, tabs)
+	}
+}
+
+func TestLoadTabsMigratesVersion1ToTabZero(t *testing.T) {
+	dir := t.TempDir()
+	audio := filepath.Join(dir, "legacy.mp3")
+	writeFile(t, audio, "audio")
+
+	legacy := map[string]any{
+		"version": 1,
+		"queue": queue.Snapshot{
+			Items:   []queue.Item{{ID: 3, Path: audio, Title: "Legacy", Duration: time.Minute}},
+			Current: 0,
+		},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "queue.json")
+	writeFile(t, path, string(data))
+
+	active, tabs, skipped, err := New(path).LoadTabs()
+	if err != nil {
+		t.Fatalf("LoadTabs: %v", err)
+	}
+	if skipped != 0 {
+		t.Errorf("skipped = %d, want 0", skipped)
+	}
+	if active != 0 {
+		t.Errorf("active = %d, want 0", active)
+	}
+	if len(tabs) != 1 {
+		t.Fatalf("tabs = %d, want 1", len(tabs))
+	}
+	if len(tabs[0].Items) != 1 || tabs[0].Items[0].Title != "Legacy" || tabs[0].Current != 0 {
+		t.Errorf("migrated tab = %+v", tabs[0])
+	}
+}
+
+func TestLoadTabsPrunesEachTab(t *testing.T) {
+	dir := t.TempDir()
+	audioA := filepath.Join(dir, "a.mp3")
+	audioB := filepath.Join(dir, "b.mp3")
+	writeFile(t, audioA, "a")
+	writeFile(t, audioB, "b")
+	missingA := filepath.Join(dir, "missing-a.mp3")
+	missingB := filepath.Join(dir, "missing-b.mp3")
+
+	tabs := []queue.Snapshot{
+		{
+			Items: []queue.Item{
+				{ID: 10, Path: audioA, Title: "A"},
+				{ID: 20, Path: missingA, Title: "Gone A"},
+			},
+			Current: 0,
+		},
+		{
+			Items: []queue.Item{
+				{ID: 30, Path: missingB, Title: "Gone B"},
+				{ID: 40, Path: audioB, Title: "B"},
+			},
+			Current: 1,
+		},
+	}
+
+	active, got, skipped := saveTabsAndLoad(t, filepath.Join(dir, "queue.json"), 1, tabs)
+	if active != 1 {
+		t.Errorf("active = %d, want 1", active)
+	}
+	if skipped != 2 {
+		t.Errorf("skipped = %d, want 2", skipped)
+	}
+	if len(got) != 2 {
+		t.Fatalf("tabs = %d, want 2", len(got))
+	}
+	if len(got[0].Items) != 1 || got[0].Items[0].Path != audioA || got[0].Current != 0 {
+		t.Errorf("tab 0 after prune = %+v", got[0])
+	}
+	if len(got[1].Items) != 1 || got[1].Items[0].Path != audioB || got[1].Current != 0 {
+		t.Errorf("tab 1 after prune = %+v", got[1])
+	}
+}
+
+func TestLoadTabsClampsActiveTab(t *testing.T) {
+	dir := t.TempDir()
+	tabs := []queue.Snapshot{{Current: -1}, {Current: -1}}
+	for _, active := range []int{2, 99, -1} {
+		active, got, skipped := saveTabsAndLoad(t, filepath.Join(dir, "queue.json"), active, tabs)
+		if active != 0 {
+			t.Errorf("active = %d, want 0", active)
+		}
+		if skipped != 0 || len(got) != len(tabs) {
+			t.Errorf("load = %d tabs, skipped %d", len(got), skipped)
+		}
+	}
+
+	active, got, skipped := saveTabsAndLoad(t, filepath.Join(dir, "empty.json"), 7, nil)
+	if active != 0 || len(got) != 0 || skipped != 0 {
+		t.Errorf("empty load = active %d, %d tabs, skipped %d", active, len(got), skipped)
+	}
+}
+
+func TestSaveTabsRejectsTooManyTabs(t *testing.T) {
+	tabs := make([]queue.Snapshot, 11)
+	for i := range tabs {
+		tabs[i].Current = -1
+	}
+	if err := New(filepath.Join(t.TempDir(), "queue.json")).SaveTabs(0, tabs); err == nil {
+		t.Fatal("SaveTabs accepted more than ten tabs")
+	}
+
+	path := filepath.Join(t.TempDir(), "queue.json")
+	writeFile(t, path, `{"version":2,"active_tab":0,"tabs":[{},{},{},{},{},{},{},{},{},{},{}]}`)
+	if _, _, _, err := New(path).LoadTabs(); err == nil {
+		t.Fatal("LoadTabs accepted more than ten tabs")
 	}
 }
