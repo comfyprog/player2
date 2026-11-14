@@ -82,6 +82,7 @@ func TestDefault(t *testing.T) {
 		"switch_pane":   {"tab"},
 		"toggle_zoom":   {"z"},
 		"open":          {"enter"},
+		"preview":       {"shift+enter"},
 		"parent":        {"backspace"},
 		"up":            {"up", "k"},
 		"down":          {"down", "j"},
