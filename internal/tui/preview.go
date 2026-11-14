@@ -58,9 +58,10 @@ func (m *Model) startPreview(entry library.Entry) tea.Cmd {
 	m.beginPlaybackIntent()
 
 	play := m.requestTransport(transportAction{
-		kind:   transportPlay,
-		item:   item,
-		status: "previewing " + displayTitle(item),
+		kind:    transportPlay,
+		item:    item,
+		status:  "previewing " + displayTitle(item),
+		preview: true,
 	})
 	probe := m.previewProbeCmd(item)
 	if play == nil && probe == nil {

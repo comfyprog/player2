@@ -29,6 +29,78 @@ func startTestPreview(t *testing.T, m *Model) *Model {
 	return runCmd(t, m, cmd)
 }
 
+func TestSeekReplacingPendingPreviewClearsPreview(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.prober = nil
+	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))
+	m.queue.SetCurrent(0)
+	m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
+
+	// Pretend a transport operation is already in flight so the preview Play
+	// can only be queued as the pending action.
+	m.transportBusy = true
+	m.transportSeq = 7
+
+	next, cmd := pressForCmd(t, m, previewKey())
+	m = next
+	if cmd != nil {
+		t.Fatalf("queued preview returned command %T, want nil", cmd)
+	}
+	if label := m.nowPlayingLabel(); !strings.Contains(label, "preview") {
+		t.Fatalf("now playing label = %q, want preview queued", label)
+	}
+
+	// Seeking replaces the pending preview Play. The preview must not stay
+	// active while the queue stream is the only thing that can start.
+	next, cmd = pressForCmd(t, m, specialKey(tea.KeyRight))
+	m = next
+	if cmd != nil {
+		t.Fatalf("seek while transport busy returned command %T, want nil", cmd)
+	}
+	if label := m.nowPlayingLabel(); strings.Contains(label, "song") || !strings.Contains(label, "Queued") {
+		t.Errorf("now playing label = %q, want queue item after preview was dropped", label)
+	}
+
+	m = runCmd(t, m, m.applyTransportResult(transportResultMsg{seq: 0}))
+	if len(fp.seekDeltas) != 1 || fp.seekDeltas[0] != 5*time.Second {
+		t.Errorf("seek deltas = %v, want [5s] after pending seek runs", fp.seekDeltas)
+	}
+}
+
+func TestAutoAdvanceDoesNotCancelPendingLevelPlay(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute), playlistItem("Next", "Artist", 2, time.Minute))
+	m.queue.SetCurrent(0)
+	m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
+
+	// Enter starts an async level build.
+	next, pendingLevel := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = next
+	if pendingLevel == nil {
+		t.Fatal("Enter returned no level build command")
+	}
+
+	// The old queue track finishes and auto-advances while that build runs.
+	queued, _ := m.queue.Current()
+	autoAdvance := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: queued.ID},
+		ok:    true,
+	})
+	m = runCmd(t, m, autoAdvance)
+
+	// The explicit level build must still win over the automatic advance.
+	updated, playCmd := m.Update(pendingLevel())
+	m = updated.(*Model)
+	m = runCmd(t, m, playCmd)
+
+	if got := len(m.queue.Snapshot().Items); got != 1 {
+		t.Fatalf("queue length = %d, want explicit level build to replace queue", got)
+	}
+	if item, _ := m.queue.Current(); item.Title != "song" {
+		t.Errorf("queue current = %q, want song", item.Title)
+	}
+}
+
 func TestPreviewHeaderAndProgressUsePreviewItem(t *testing.T) {
 	m, _ := newBrowserModel(t, &testScanner{})
 	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))

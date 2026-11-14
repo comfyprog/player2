@@ -32,13 +32,16 @@ const (
 	transportStop
 )
 
-// transportAction is one queued Play, Seek, or Stop request.
+// transportAction is one queued Play, Seek, or Stop request. preview marks a
+// Play that started one-off playback outside the queue so replacing it can
+// clear the preview state instead of leaving it stuck.
 type transportAction struct {
-	kind   transportKind
-	item   queue.Item
-	status string
-	delta  time.Duration
-	seq    uint64
+	kind    transportKind
+	item    queue.Item
+	status  string
+	delta   time.Duration
+	seq     uint64
+	preview bool
 }
 
 // transportResultMsg reports the outcome of one serialized transport
@@ -304,7 +307,6 @@ func (m *Model) selectPlaylistLast() {
 // playItem queues a Play request. Play opens a decoder and may block, so it
 // never runs inside Update.
 func (m *Model) playItem(item queue.Item, status string) tea.Cmd {
-	m.beginPlaybackIntent()
 	m.clearPreview()
 	return m.requestTransport(transportAction{
 		kind:   transportPlay,
@@ -324,6 +326,12 @@ func (m *Model) requestTransport(action transportAction) tea.Cmd {
 	m.transportSeq++
 	action.seq = m.transportSeq
 	if m.transportBusy {
+		if m.pendingTransport != nil && m.pendingTransport.preview && !action.preview {
+			// The preview Play never reached the player. Drop the preview
+			// state with it so a following Seek/Stop cannot leave the header
+			// claiming a preview owns the queue's stream.
+			m.clearPreview()
+		}
 		m.pendingTransport = &action
 		return nil
 	}
@@ -409,6 +417,7 @@ func (m *Model) actionPause() tea.Cmd {
 		m.setStatusOK("nothing to play")
 		return nil
 	}
+	m.beginPlaybackIntent()
 	return m.playItem(item, "playing "+displayTitle(item))
 }
 
@@ -440,6 +449,7 @@ func (m *Model) actionNext() tea.Cmd {
 	}
 	m.bumpQueueEpoch()
 	m.followSelection(previous, selected, hadPrevious, hadSelected)
+	m.beginPlaybackIntent()
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
@@ -459,6 +469,7 @@ func (m *Model) actionPrevious() tea.Cmd {
 	}
 	m.bumpQueueEpoch()
 	m.followSelection(previous, selected, hadPrevious, hadSelected)
+	m.beginPlaybackIntent()
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
@@ -587,6 +598,7 @@ func (m *Model) playlistOpen() tea.Cmd {
 		m.setStatusOK("nothing to play")
 		return nil
 	}
+	m.beginPlaybackIntent()
 	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
