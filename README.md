@@ -84,6 +84,7 @@ All keys are configurable; these are the defaults.
 | Quit | `q`, `Ctrl+C` | Exit player2 |
 | Help | `?` | Show the full key map |
 | Switch pane | `Tab` | Move between the browser and playlist |
+| Switch playlist tab | `Alt+0`…`Alt+9` | Show playlist tab 0–9 |
 | Zoom active pane | `z` | Show only the focused pane |
 | Open/play | `Enter` | Open a directory/CUE folder or play the selection |
 | Preview track | `Shift+Enter` | Play a track without changing the queue |
@@ -91,25 +92,25 @@ All keys are configurable; these are the defaults.
 | Move up/down | `Up`/`k`, `Down`/`j` | Move the selection |
 | Page up/down | `PgUp`, `PgDn` | Move one screen |
 | First/last | `Home`, `End` | Jump to the first or last row |
-| Add | `a` | Add the selection to the queue |
+| Add | `a` | Add the selection to the active tab |
 | Add all | `A` | Add the whole directory, recursively |
-| Remove | `d` | Remove the selected queue item |
-| Move item up/down | `K`, `J` | Reorder the selected queue item |
-| Play/pause | `Space` | Pause/resume, or start the current item |
+| Remove | `d` | Remove the selected item from the active tab |
+| Move item up/down | `K`, `J` | Reorder the selected item in the active tab |
+| Play/pause | `Space` | Pause/resume, or start the active tab's current item |
 | Stop | `x` | Stop playback |
-| Next/previous | `n`, `b` | Move through the queue |
+| Next/previous | `n`, `b` | Move through the sounding queue |
 | Seek back/forward | `Left`, `Right` | Seek by 5 seconds |
 | Volume up/down | `+`/`=`, `-`/`_` | Change volume by 5% |
 | Mute | `m` | Toggle mute |
-| Shuffle | `s` | Toggle shuffle |
-| Repeat | `r` | Cycle off, all, one |
+| Shuffle | `s` | Toggle shuffle for the active tab |
+| Repeat | `r` | Cycle repeat for the active tab |
 | Search | `/` | Filter the browser by substring |
 | Toggle tags | `t` | Switch the browser between filenames and tags |
 | Track info | `i` | Show details for the highlighted audio file |
-| Save playlist | `w` | Save the queue as an M3U file |
+| Save playlist | `w` | Save the active tab as an M3U file |
 | Rescan | `R` | Reload the current directory |
-| Clear queue | `c` | Clear the queue (with confirmation) |
-| Go to playing | `g` | Select the current queue item |
+| Clear queue | `c` | Clear the active tab (with confirmation) |
+| Go to playing | `g` | Jump to the sounding tab's current item |
 
 `Shift+Enter` (`preview` in `[keys]`) auditions the highlighted audio file or CUE
 track without touching the queue, its current item, or the saved queue file.
@@ -158,6 +159,34 @@ focused one at full width. Pressing `z` again restores both panes. `Tab` also
 leaves zoom and moves focus to the other pane. Zoom is not persisted across
 runs.
 
+## Playlist tabs
+
+The playlist pane has ten fixed tabs, numbered `0`–`9`. All ten are always
+visible: empty tabs are dimmed, the visible tab is bracketed (`[3]`), and the
+tab that owns the current sound is marked with `▶`.
+
+- `Alt+0`…`Alt+9` switch the visible tab. There are no modifier-free tab
+  shortcuts by default; bind `tab_0`…`tab_9` in `[keys]` to change them.
+- Every tab has its own queue, current item, selection, shuffle, and repeat.
+  Browser add/open, remove, move, clear, save, and go-to-playing act on the
+  visible tab.
+- Switching tabs does not interrupt playback. While audio is playing or paused,
+  next/previous and automatic advance follow the tab that started the stream.
+  The header keeps showing that item and adds `[tab N]` when another tab is
+  visible. Explicit stop clears the sounding context; after that, transport
+  falls back to the visible tab.
+- `g` jumps to the sounding tab when it is not visible, selects its current
+  item, and leaves playback alone.
+- All ten tab queues, their shuffle/repeat settings, and the visible tab are
+  saved in the state JSON and restored at startup. `restore_queue = false`
+  starts every tab empty.
+- Some terminal emulators reserve `Alt+digit` for their own tab switching. If
+  your terminal does not deliver the key to player2, rebind `tab_0`…`tab_9` in
+  `[keys]`.
+
+Tab queues are session state, not playlist files. `w` writes only the visible
+tab to an `.m3u`; loading an `.m3u` replaces the visible tab.
+
 ## Configuration
 
 The default location is `~/.config/player2/config.toml` (respecting
@@ -205,8 +234,11 @@ Notes:
 - `extra_audio_extensions` adds extensions (for example `[".m4b"]`) that the
   scanner should treat as audio. Files are still decoded by FFmpeg.
 - `[colors]` values are ANSI 256-color indexes.
+- `restore_queue` restores all ten playlist tabs and the last visible tab. With
+  it disabled, every tab starts empty and the next save replaces the state file.
 - `[keys]` action names are the lowercase names shown in the key table; each
-  value replaces that action's default binding.
+  value replaces that action's default binding. The ten tab actions are named
+  `tab_0` through `tab_9`.
 
 Unknown configuration keys and unknown `[keys]` action names are startup errors
 rather than silently ignored.
@@ -288,8 +320,10 @@ remote `file://` hosts. Only local files are scanned, queued, probed, or played.
   integration, or mouse support.
 - Linux only. Audio output uses malgo/miniaudio; there is no fallback to a
   headless or file output device.
-- The queue is persisted as JSON under the state directory; it is not a
-  portable library format.
+- Playlist tabs are persisted as JSON under the state directory; they are not a
+  portable library format. The whole tab set is rewritten on each queue change.
+- Some terminal emulators intercept `Alt+digit`; use the rebindable `tab_0`…
+  `tab_9` actions when that happens.
 
 ## Verification checklist
 
@@ -308,8 +342,11 @@ Manual checks, when a real terminal and audio device are available:
 - Play an APE, ALAC, and Opus file.
 - Open a single-file FLAC/APE album with a `.cue` sheet and play each track.
 - Pause, seek backward/forward, and confirm the position stays within the track.
-- Save the queue with `w`, load the `.m3u` from the browser, and confirm entries.
-- Restart with `restore_queue = true` and confirm the queue returns.
+- Save the active tab with `w`, load the `.m3u` from the browser, and confirm entries.
+- Start playback in tab 0, switch to tab 2 with `Alt+2`, and confirm audio and
+  the header stay on tab 0.
+- Restart with `restore_queue = true` and confirm all ten tabs and the visible
+  tab return.
 - Resize the terminal and confirm the layout stays usable.
 - Open a malformed CUE and confirm it is displayed as an error while the audio
   file remains visible.

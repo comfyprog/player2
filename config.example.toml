@@ -19,7 +19,8 @@ show_hidden = false
 # Follow symbolic links while browsing. Directory cycles are detected.
 follow_symlinks = false
 
-# Save the queue between runs and restore it at startup.
+# Save all ten playlist tabs and the visible tab between runs, and restore them
+# at startup. When false, every tab starts empty.
 restore_queue = true
 
 # Playback volume, 0-100.

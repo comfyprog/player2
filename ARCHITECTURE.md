@@ -70,7 +70,7 @@ ReplayGain, scrobbling, mouse support, remote control, and Windows/macOS.
 | `internal/library` | directory listings, CUE virtual folders, `Walk` | cue, meta |
 | `internal/queue` | queue model, IDs, shuffle/repeat, snapshots | stdlib |
 | `internal/playlist` | M3U read/write, CUE extension | queue, cue |
-| `internal/store` | queue JSON persistence and pruning | queue |
+| `internal/store` | tabbed queue JSON persistence and pruning | queue |
 | `internal/audio` | decoder/stream/sink interfaces, registry, PCM ring | stdlib |
 | `internal/audio/ffmpeg` | subprocess decoder | audio |
 | `internal/audio/malgo` | miniaudio output sink | audio, malgo |
@@ -300,7 +300,12 @@ cycles and duplicate subtrees.
 
 ## Queue and persistence
 
-### Queue model
+### Tabbed queue model
+
+The playlist pane has ten independent queues, indexed `0`–`9`. The model keeps
+one `queue.Queue` per tab plus the visible tab index and the sounding tab index.
+Each queue has the full single-queue surface: items, current item, shuffle,
+repeat, and stable item IDs starting at 1. IDs are unique only within a tab.
 
 `queue.Item` is the unit of playback:
 
@@ -332,29 +337,40 @@ shuffle order. It leaves the queue unchanged on error.
 `internal/store.Store` reads/writes:
 
 ```json
-{"version":1,"queue":{"items":[...],"current":0,"shuffle":false,"repeat":0}}
+{"version":2,"active_tab":0,"tabs":[
+  {"items":[...],"current":0,"shuffle":false,"repeat":0},
+  ...
+]}
 ```
 
-- Missing file → empty snapshot (`current:-1`), no error.
-- Corrupt JSON/unsupported version → error.
-- Load prunes items whose audio or CUE path is missing/not a regular file, returns
-  the skipped count, and preserves the current item by ID where possible.
+- `LoadTabs` returns `(active, tabs, skipped, err)` and `SaveTabs` writes the
+  same shape. A version 1 file is read as one tab at index 0; older binaries
+  cannot read version 2.
+- Missing file → active tab 0 and no snapshots, no error.
+- Corrupt JSON/unsupported version/more than ten tabs → error.
+- Load prunes items whose audio or CUE path is missing/not a regular file in
+  every tab, returns the total skipped count, and preserves each tab's current
+  item by ID where possible. An out-of-range active index clamps to 0.
 - Save creates the parent (`0700`), writes a same-directory temp file with mode
   `0600`, syncs, and renames over the destination. Failures clean up the temp.
+  The whole tab set is rewritten; there is no per-tab file.
 
 ### TUI persistence and restore ordering
 
-- `Model.Init` starts an async `store.Load` when `restore_queue` is true and a store
-  is configured.
+- `Model.Init` starts an async `store.LoadTabs` when `restore_queue` is true and a
+  store is configured.
+- Restore validates every tab into a fresh queue before installing any of them.
+  Missing tabs are padded with empty snapshots; the saved active index selects
+  the visible tab. Nothing auto-plays after restore.
 - `restorePending` is true from construction until a restore succeeds. While true,
   `saveQueue` and `FlushQueue` do not write, so startup cannot overwrite a valid
-  queue file with an empty in-memory queue.
-- A real item/current mutation bumps a queue epoch and clears `restorePending`;
-  a late restore result is dropped with a status message. Shuffle/repeat setting
-  changes do not count as queue replacement.
+  tab set with empty in-memory queues.
+- A real item/current mutation in any tab bumps a queue epoch and clears
+  `restorePending`; a late restore result is dropped with a status message.
+  Shuffle/repeat changes and tab switches do not count as queue replacement.
 - Saves are single-flight and coalescing: one save in flight at a time, with a
-  `saveDirty` flag for a newer snapshot. `saveMu` serializes TUI saves with the
-  exit `FlushQueue`.
+  `saveDirty` flag for a newer full tab snapshot. `saveMu` serializes TUI saves
+  with the exit `FlushQueue`.
 - Exit calls `FlushQueue` before/alongside `Player.Close`; a pending restore keeps
   the file untouched.
 
@@ -398,6 +414,15 @@ View() tea.View
 - one header row (now-playing, position/duration, volume, repeat/shuffle),
 - a two-pane body (browser left, playlist right),
 - a two-row footer (status/progress bar and key hints).
+
+The playlist pane's first row is its tab strip: ten fixed slots, the visible
+tab bracketed, the sounding tab marked with `▶`, and empty tabs dimmed. The
+remaining rows are the visible tab's items.
+
+The model distinguishes the **visible tab** (what the playlist pane edits) from
+the **sounding tab** (which queue owns the player's stream). Switching tabs
+only changes the visible tab. `playbackTab` is -1 when no queue owns the
+stream; starting a queue item sets it, explicit stop and end-of-queue clear it.
 
 Minimum terminal size is 60×10; below it the view renders a clear “terminal too
 small” message. Rendering builds plain, width-checked rows with
@@ -446,27 +471,38 @@ built-in defaults.
 
 ### Playlist and transport
 
-- Playlist rendering shows the current marker, selection, title/artist, CUE track
-  number, right-aligned duration, and scroll offset.
-- Queue replacement/restore selects the current item. Manual and automatic advance
-  move the playlist selection only when it was already on the previous current
-  item.
-- Transport is global: pause/resume (or play current when stopped), stop,
-  next/prev, seek ±5s, volume ±5, mute, shuffle, repeat. Playlist-focused actions:
-  Enter plays selection, `d` removes (stopping playback when removing current),
-  `K`/`J` move, `c` clears (with confirmation), `g` jumps to current, and
-  Up/Down/Page/Home/End move selection.
+- Playlist rendering shows the tab strip, then the visible tab's current marker,
+  selection, title/artist, CUE track number, right-aligned duration, and scroll
+  offset. Each tab remembers its own selection and scroll offset.
+- Queue replacement/restore selects the active tab's current item. Manual and
+  automatic advance move a tab's selection only when it was already on the
+  previous current item.
+- Add/open/remove/move/clear/save and selection movement act on the visible tab.
+  Loading a directory, CUE folder, or playlist replaces the visible tab and
+  starts playback from it.
+- Transport is global: pause/resume (or play the visible tab's current item when
+  stopped), stop, next/prev, seek ±5s, volume ±5, mute, shuffle, repeat. While a
+  sounding tab exists, next/previous and auto-advance operate on that tab even
+  when another tab is visible. Explicit stop clears the sounding context, after
+  which transport uses the visible tab. `g` switches to the sounding tab when
+  needed and selects its current item.
+- Removing the current item or clearing a tab stops playback only when that tab
+  owns the sound (or no tab does); editing another tab leaves audio alone.
 - Play/Seek/Stop are serialized through an in-flight + pending transport chain.
   This prevents concurrent Bubble Tea commands from acquiring the player mutex in
   the wrong order. Queue/current changes remain immediate; the next operation is
   dispatched only after the current one returns.
 - Finished/error events are consumed through a `tea.Cmd` waiting on the player's
   event channel. Auto-advance happens only for a `finished` event whose `ItemID`
-  still matches the current queue item. Repeat-one replays the item, repeat-all
-  wraps, repeat-off at the end stops advancing. Errors set a status error.
+  matches the sounding tab's current item; equal IDs in other tabs are ignored.
+  Repeat-one replays the item, repeat-all wraps, repeat-off at the end stops
+  advancing. Errors set a status error.
 - Plain audio metadata is probed asynchronously for items lacking duration/title;
-  CUE tracks are not probed. Probes are deduplicated by ID/path and bounded to four
-  concurrent `ffprobe` processes per model.
+  CUE tracks are not probed. Probes are deduplicated by `(tab, item ID)` and path
+  and bounded to four concurrent `ffprobe` processes per model. The active tab is
+  probed on restore and on switch, so startup does not probe all ten queues.
+- Switching tabs is a view-only operation and does not bump the queue epoch or
+  schedule a save; exit flush persists the active tab.
 
 ### Prompts and keymap
 
@@ -490,6 +526,9 @@ built-in defaults.
 - Keymap actions are a closed vocabulary defined in `internal/config`.
   `NewKeyMap` overlays partial config on defaults, rejects unknown actions,
   duplicate keystrokes, and empty keys, and is validated before program startup.
+  `tab_0`…`tab_9` switch the visible tab and default to `alt+0`…`alt+9`; some
+  terminal emulators intercept those keys, so all ten are rebindable.
+- `?` help lists all ten tab actions; the footer hints stay compact.
 
 ## Configuration and XDG
 
@@ -502,7 +541,8 @@ built-in defaults.
 - `start_dir` expands `~` and environment variables.
 - `ffmpeg_bin`/`ffprobe_bin` must resolve to executables at startup.
 - `extra_audio_extensions` is appended to the built-in scanner/registry list.
-- State: queue JSON and debug log live under `<StateDir>` (`~/.local/state/player2`).
+- State: the tabbed queue JSON and debug log live under `<StateDir>`
+  (`~/.local/state/player2`).
 
 ## Security and failure handling
 
@@ -517,7 +557,7 @@ built-in defaults.
 - CUE validation is fail-visible: invalid sheets never hide audio. Missing media
   makes the sheet invalid rather than leaving a phantom folder.
 - Queue/store writes are atomic and serialize through the model's save mutex;
-  startup restore cannot overwrite a valid file with an empty queue.
+  startup restore cannot overwrite a valid tabbed file with empty queues.
 - TUI event delivery is lossless during normal operation (the monitor blocks on a
   full buffer but is unblocked by Close).
 
@@ -562,9 +602,9 @@ channels) consistent with the FFmpeg decoder.
 ### Change persistence
 
 Bump the store schema version and add a read path/migration before changing
-`queue.Snapshot` tags. Preserve atomic writes, pruning, mode `0600`, restore-pending
-suppression, and exit flush ordering. Add a round-trip test and a corrupt-version
-test.
+`queue.Snapshot` tags or the `active_tab`/`tabs` envelope. Preserve atomic
+writes, per-tab pruning, mode `0600`, restore-pending suppression, and exit
+flush ordering. Add a round-trip test and a corrupt-version test.
 
 ### Change CUE behavior
 
@@ -585,9 +625,14 @@ encoding/path edge cases.
   “playing …” message even though the latest item wins; playback ordering itself is
   serialized.
 - Shuffle/repeat toggled before a pending startup restore completes may be
-  overwritten by the restored snapshot and are not persisted in that window.
+  overwritten by the restored snapshot and are not persisted in that window;
+  tab switches in that window are also overwritten by the saved active tab.
 - A failed startup restore leaves saves suppressed until the first real queue
   mutation, preserving the existing file rather than overwriting it.
+- Every queue change rewrites all ten tab snapshots to one JSON file. Large
+  queues in many tabs make each save proportionally heavier.
+- Some terminal emulators consume `Alt+digit` themselves, so the default tab
+  shortcuts may need rebinding.
 - Event identity is item-ID-based; replaying the exact same queue item in a narrow
   window can still accept an already-queued finished event.
 - M3U path lines with leading whitespace before a URL are treated as local paths
