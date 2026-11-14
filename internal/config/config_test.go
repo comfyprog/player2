@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // setHome points HOME at a fresh temp directory and clears XDG overrides so
@@ -194,6 +196,70 @@ func TestLoadMissingDefaultFileUsesDefaults(t *testing.T) {
 	want.StartDir = filepath.Join(home, "Music")
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("missing default config:\n got %#v\nwant %#v", cfg, want)
+	}
+}
+
+func TestExampleConfigCoversEveryOptionAndDefault(t *testing.T) {
+	home := setHome(t)
+	path := filepath.Join("..", "..", "config.example.toml")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read example config: %v", err)
+	}
+
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("parse example config: %v", err)
+	}
+	requireTOMLFields(t, raw, reflect.TypeOf(Config{}), "")
+
+	rawKeys, ok := raw["keys"].(map[string]any)
+	if !ok {
+		t.Fatalf("example config has no [keys] table")
+	}
+	for action := range keyActions {
+		if _, ok := rawKeys[action]; !ok {
+			t.Errorf("example config is missing key action %q", action)
+		}
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load example config: %v", err)
+	}
+	want := Default()
+	want.StartDir = filepath.Join(home, "Music")
+	if cfg.ExtraAudioExtensions == nil {
+		cfg.ExtraAudioExtensions = []string{}
+	}
+	if !reflect.DeepEqual(cfg, want) {
+		t.Errorf("example config values differ from defaults:\n got %#v\nwant %#v", cfg, want)
+	}
+}
+
+// requireTOMLFields verifies that every TOML-tagged field of typ is present in
+// table, descending into embedded structs such as [colors].
+func requireTOMLFields(t *testing.T, table map[string]any, typ reflect.Type, prefix string) {
+	t.Helper()
+
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		name := strings.Split(field.Tag.Get("toml"), ",")[0]
+		value, ok := table[name]
+		if !ok {
+			t.Errorf("example config is missing %s%s", prefix, name)
+			continue
+		}
+		if field.Type.Kind() != reflect.Struct {
+			continue
+		}
+		nested, ok := value.(map[string]any)
+		if !ok {
+			t.Errorf("example config %s%s is not a table", prefix, name)
+			continue
+		}
+		requireTOMLFields(t, nested, field.Type, prefix+name+".")
 	}
 }
 

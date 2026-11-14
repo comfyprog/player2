@@ -1,0 +1,100 @@
+# player2 example configuration
+#
+# Copy this file to ~/.config/player2/config.toml (respecting XDG_CONFIG_HOME)
+# and edit it, or pass it explicitly:
+#
+#     player2 --config /path/to/config.toml
+#
+# Every key is optional. The values below are the built-in defaults, so this
+# file can be used as-is. Unknown keys and unknown [keys] action names are
+# startup errors rather than being silently ignored.
+
+# Directory shown when player2 starts. Supports a leading ~ and environment
+# variables such as $HOME.
+start_dir = "~/Music"
+
+# Show dotfiles and directories whose names start with a dot.
+show_hidden = false
+
+# Follow symbolic links while browsing. Directory cycles are detected.
+follow_symlinks = false
+
+# Save the queue between runs and restore it at startup.
+restore_queue = true
+
+# Playback volume, 0-100.
+volume = 70
+
+# Output sample rate in Hz. Must be positive.
+sample_rate = 48000
+
+# Seconds of decoded audio buffered ahead of playback. Must be positive.
+buffer_seconds = 2
+
+# FFmpeg/ffprobe executables: names on PATH or explicit paths.
+ffmpeg_bin = "ffmpeg"
+ffprobe_bin = "ffprobe"
+
+# Encoding used for CUE sheets that are neither UTF-8 nor UTF-16 with a
+# byte-order mark. Use "utf-8" or "utf8" to disable the legacy fallback.
+cue_fallback_encoding = "windows-1252"
+
+# Extra file extensions the browser should treat as audio, for example
+# [".m4b", ".opus"]. Files are still decoded by FFmpeg.
+extra_audio_extensions = []
+
+# UI colors as ANSI 256-color indexes.
+[colors]
+accent = "39"   # focused borders, selected rows, status accents
+dir = "33"      # directories in the browser
+cue = "141"     # CUE sheets and CUE tracks
+playing = "46"  # the currently playing queue item
+error = "196"   # errors and invalid entries
+
+# Key bindings. Each value is an array of Bubble Tea key names and replaces
+# that action's default binding. Omit an action to keep its default.
+# Letters are case-sensitive: "A" is Shift+A, "a" is lowercase a.
+[keys]
+# General
+quit = ["q", "ctrl+c"]          # exit player2
+help = ["?"]                    # show the full key map
+switch_pane = ["tab"]           # move focus between browser and queue
+toggle_zoom = ["z"]             # show only the focused pane
+search = ["/"]                  # filter the browser by substring
+
+# Browsing
+open = ["enter"]                # enter a directory/CUE folder or play selection
+preview = ["shift+enter"]       # audition without changing the queue
+parent = ["backspace"]          # go up one directory
+up = ["up", "k"]                # move selection up
+down = ["down", "j"]            # move selection down
+page_up = ["pgup"]              # move one screen up
+page_down = ["pgdown"]          # move one screen down
+first = ["home"]                # jump to first row
+last = ["end"]                  # jump to last row
+toggle_tags = ["t"]             # filenames vs embedded tags
+info = ["i"]                    # details for the highlighted audio file
+rescan = ["R"]                  # reload the current directory
+
+# Queue
+add = ["a"]                     # add selection to the queue
+add_all = ["A"]                 # add current directory recursively
+remove = ["d"]                  # remove selected queue item
+move_up = ["K"]                 # move selected queue item up
+move_down = ["J"]               # move selected queue item down
+clear = ["c"]                   # clear the queue (asks for confirmation)
+save_playlist = ["w"]           # save the queue as an M3U file
+goto_playing = ["g"]            # select the current queue item
+
+# Playback
+pause = ["space"]               # pause/resume or start the current item
+stop = ["x"]                    # stop playback
+next = ["n"]                    # next queue item
+previous = ["b"]                # previous queue item
+seek_back = ["left"]            # seek back 5 seconds
+seek_forward = ["right"]        # seek forward 5 seconds
+volume_up = ["+", "="]          # raise volume by 5%
+volume_down = ["-", "_"]        # lower volume by 5%
+mute = ["m"]                    # toggle mute
+shuffle = ["s"]                 # toggle shuffle
+repeat = ["r"]                  # cycle repeat off/all/one

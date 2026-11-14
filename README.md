@@ -162,7 +162,8 @@ runs.
 
 The default location is `~/.config/player2/config.toml` (respecting
 `XDG_CONFIG_HOME`). Every key is optional; omitted keys keep the defaults shown
-below.
+below. A complete copyable example with every option and default binding is in
+[`config.example.toml`](config.example.toml).
 
 ```toml
 start_dir = "~/Music"
