@@ -88,13 +88,12 @@ func (m *Model) playlistBodyRows() int {
 	return max(m.height-headerRows-footerRows-1, 1)
 }
 
-// playlistBounds clamps the selection and scroll offset for count items and
+// playlistBoundsFor clamps a selection and scroll offset for count items and
 // rows visible rows, keeping the selection on screen.
-func (m *Model) playlistBounds(count, rows int) (selected, offset int) {
+func playlistBoundsFor(selected, offset, count, rows int) (int, int) {
 	if count <= 0 || rows <= 0 {
 		return 0, 0
 	}
-	selected = m.playlistSelected
 	if selected < 0 {
 		selected = 0
 	}
@@ -102,7 +101,6 @@ func (m *Model) playlistBounds(count, rows int) (selected, offset int) {
 		selected = count - 1
 	}
 
-	offset = m.playlistOffset
 	if offset < 0 {
 		offset = 0
 	}
@@ -116,6 +114,48 @@ func (m *Model) playlistBounds(count, rows int) (selected, offset int) {
 		offset = selected - rows + 1
 	}
 	return selected, offset
+}
+
+// playlistBounds clamps the active tab's selection and scroll offset.
+func (m *Model) playlistBounds(count, rows int) (selected, offset int) {
+	return playlistBoundsFor(m.playlistSelected, m.playlistOffset, count, rows)
+}
+
+// tabSelection returns tab's remembered selection and offset. The active tab
+// keeps those values in the model's top-level fields.
+func (m *Model) tabSelection(tab int) (selected, offset int) {
+	if tab == m.activeTab {
+		return m.playlistSelected, m.playlistOffset
+	}
+	if tab < 0 || tab >= tabCount {
+		return 0, 0
+	}
+	return m.tabs[tab].selected, m.tabs[tab].offset
+}
+
+// setTabSelection stores selection and offset for tab.
+func (m *Model) setTabSelection(tab, selected, offset int) {
+	if tab == m.activeTab {
+		m.playlistSelected = selected
+		m.playlistOffset = offset
+		return
+	}
+	if tab < 0 || tab >= tabCount {
+		return
+	}
+	m.tabs[tab].selected = selected
+	m.tabs[tab].offset = offset
+}
+
+// clampTabSelection keeps tab's selection and offset valid for its queue and
+// the current terminal size.
+func (m *Model) clampTabSelection(tab int) {
+	if tab < 0 || tab >= tabCount {
+		return
+	}
+	selected, offset := m.tabSelection(tab)
+	selected, offset = playlistBoundsFor(selected, offset, m.tabs[tab].queue.Len(), m.playlistBodyRows())
+	m.setTabSelection(tab, selected, offset)
 }
 
 // clampPlaylist keeps the selection and offset valid for the current queue and
@@ -323,13 +363,21 @@ func displayTitle(item queue.Item) string {
 	return title
 }
 
-// selectedPlaylistItem returns the item under the playlist selection.
+// selectedPlaylistItem returns the item under the active tab's selection.
 func (m *Model) selectedPlaylistItem() (queue.Item, bool) {
-	items := m.queue.Snapshot().Items
+	return m.selectedPlaylistItemFor(m.activeTab)
+}
+
+// selectedPlaylistItemFor returns the item under tab's selection.
+func (m *Model) selectedPlaylistItemFor(tab int) (queue.Item, bool) {
+	if tab < 0 || tab >= tabCount {
+		return queue.Item{}, false
+	}
+	items := m.tabs[tab].queue.Snapshot().Items
 	if len(items) == 0 {
 		return queue.Item{}, false
 	}
-	index := m.playlistSelected
+	index, _ := m.tabSelection(tab)
 	if index < 0 {
 		index = 0
 	}
@@ -339,14 +387,19 @@ func (m *Model) selectedPlaylistItem() (queue.Item, bool) {
 	return items[index], true
 }
 
-// queueIndex returns the index of id in the queue, or -1.
-func (m *Model) queueIndex(id uint64) int {
-	for index, item := range m.queue.Snapshot().Items {
+// queueIndexOf returns the index of id in q, or -1.
+func queueIndexOf(q *queue.Queue, id uint64) int {
+	for index, item := range q.Snapshot().Items {
 		if item.ID == id {
 			return index
 		}
 	}
 	return -1
+}
+
+// queueIndex returns the index of id in the active queue, or -1.
+func (m *Model) queueIndex(id uint64) int {
+	return queueIndexOf(m.queue, id)
 }
 
 // selectCurrent moves the playlist selection to the current item.
@@ -363,14 +416,27 @@ func (m *Model) selectCurrent() {
 	m.clampPlaylist()
 }
 
-// followSelection applies the selection-follow rule: the selection moves to
-// the new current item only when it was on the previous current item.
+// followSelection applies the active tab's selection-follow rule.
 func (m *Model) followSelection(previous, selected queue.Item, hadPrevious, hadSelected bool) {
-	if hadPrevious && hadSelected && previous.ID == selected.ID {
-		m.selectCurrent()
+	m.followSelectionFor(m.activeTab, previous, selected, hadPrevious, hadSelected)
+}
+
+// followSelectionFor moves tab's selection to the new current item only when
+// it was on the previous current item.
+func (m *Model) followSelectionFor(tab int, previous, selected queue.Item, hadPrevious, hadSelected bool) {
+	if tab < 0 || tab >= tabCount {
 		return
 	}
-	m.clampPlaylist()
+	if hadPrevious && hadSelected && previous.ID == selected.ID {
+		q := m.tabs[tab].queue
+		if current, ok := q.Current(); ok {
+			if index := queueIndexOf(q, current.ID); index >= 0 {
+				_, offset := m.tabSelection(tab)
+				m.setTabSelection(tab, index, offset)
+			}
+		}
+	}
+	m.clampTabSelection(tab)
 }
 
 // movePlaylistSelection moves the selection by delta and keeps it visible.
@@ -397,15 +463,34 @@ func (m *Model) selectPlaylistLast() {
 	m.clampPlaylist()
 }
 
-// playItem queues a Play request. Play opens a decoder and may block, so it
-// never runs inside Update.
-func (m *Model) playItem(item queue.Item, status string) tea.Cmd {
+// playItem queues a Play request and makes tab the sounding tab. Play opens a
+// decoder and may block, so it never runs inside Update.
+func (m *Model) playItem(tab int, item queue.Item, status string) tea.Cmd {
 	m.clearPreview()
+	if tab >= 0 && tab < tabCount {
+		m.playbackTab = tab
+	}
 	return m.requestTransport(transportAction{
 		kind:   transportPlay,
 		item:   item,
 		status: status,
 	})
+}
+
+// transportTab returns the tab that next/previous should target: the sounding
+// tab while one is active, otherwise the visible tab.
+func (m *Model) transportTab() int {
+	if m.playbackTab >= 0 && m.playbackTab < tabCount {
+		return m.playbackTab
+	}
+	return m.activeTab
+}
+
+// activeOwnsPlayback reports whether clearing or removing from the visible tab
+// should stop the stream. With no sounding tab there is nothing else to
+// protect, so the legacy stop behavior applies.
+func (m *Model) activeOwnsPlayback() bool {
+	return m.playbackTab < 0 || m.playbackTab == m.activeTab
 }
 
 // requestTransport serializes playback-changing operations. While one is in
@@ -511,7 +596,7 @@ func (m *Model) actionPause() tea.Cmd {
 		return nil
 	}
 	m.beginPlaybackIntent()
-	return m.playItem(item, "playing "+displayTitle(item))
+	return m.playItem(m.activeTab, item, "playing "+displayTitle(item))
 }
 
 // actionStop stops playback. The status is immediate; the actual Stop is
@@ -520,50 +605,63 @@ func (m *Model) actionStop() tea.Cmd {
 	m.setStatusOK("stopped")
 	if m.player == nil {
 		m.clearPreview()
+		m.playbackTab = -1
 		m.beginPlaybackIntent()
 		return nil
 	}
 	return m.stopPlayback()
 }
 
-// actionNext advances the queue and plays the next item. Next/previous are
-// ignored while a one-off preview owns playback.
+// actionNext advances the sounding queue and plays the next item. Next and
+// previous are ignored while a one-off preview owns playback.
 func (m *Model) actionNext() tea.Cmd {
 	if m.previewActive {
 		return nil
 	}
-	previous, hadPrevious := m.queue.Current()
-	selected, hadSelected := m.selectedPlaylistItem()
-	item, ok := m.queue.Next(false)
+	tab := m.transportTab()
+	q := m.tabs[tab].queue
+	previous, hadPrevious := q.Current()
+	selected, hadSelected := m.selectedPlaylistItemFor(tab)
+	item, ok := q.Next(false)
 	if !ok {
-		m.clampPlaylist()
-		m.setStatusOK("end of queue")
+		m.clampTabSelection(tab)
+		m.setStatusOK(m.queueEndStatus(tab, "end of queue"))
 		return nil
 	}
 	m.bumpQueueEpoch()
-	m.followSelection(previous, selected, hadPrevious, hadSelected)
+	m.followSelectionFor(tab, previous, selected, hadPrevious, hadSelected)
 	m.beginPlaybackIntent()
-	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
+	return tea.Batch(m.playItem(tab, item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
-// actionPrevious moves back in the queue and plays the previous item. It is
-// ignored while a one-off preview owns playback.
+// actionPrevious moves back in the sounding queue and plays the previous item.
 func (m *Model) actionPrevious() tea.Cmd {
 	if m.previewActive {
 		return nil
 	}
-	previous, hadPrevious := m.queue.Current()
-	selected, hadSelected := m.selectedPlaylistItem()
-	item, ok := m.queue.Prev()
+	tab := m.transportTab()
+	q := m.tabs[tab].queue
+	previous, hadPrevious := q.Current()
+	selected, hadSelected := m.selectedPlaylistItemFor(tab)
+	item, ok := q.Prev()
 	if !ok {
-		m.clampPlaylist()
-		m.setStatusOK("start of queue")
+		m.clampTabSelection(tab)
+		m.setStatusOK(m.queueEndStatus(tab, "start of queue"))
 		return nil
 	}
 	m.bumpQueueEpoch()
-	m.followSelection(previous, selected, hadPrevious, hadSelected)
+	m.followSelectionFor(tab, previous, selected, hadPrevious, hadSelected)
 	m.beginPlaybackIntent()
-	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
+	return tea.Batch(m.playItem(tab, item, "playing "+displayTitle(item)), m.saveQueue())
+}
+
+// queueEndStatus names the tab for queue-boundary messages when it is not the
+// visible one.
+func (m *Model) queueEndStatus(tab int, message string) string {
+	if tab == m.activeTab {
+		return message
+	}
+	return fmt.Sprintf("tab %d: %s", tab, message)
 }
 
 // actionSeek queues a seek by delta.
@@ -660,7 +758,7 @@ func (m *Model) handlePlaylistAction(action Action) tea.Cmd {
 	case ActionInfo:
 		return m.openPlaylistInfo()
 	case ActionGotoPlaying:
-		m.selectCurrent()
+		return m.gotoPlaying()
 	case ActionUp:
 		m.movePlaylistSelection(-1)
 	case ActionDown:
@@ -674,6 +772,19 @@ func (m *Model) handlePlaylistAction(action Action) tea.Cmd {
 	case ActionLast:
 		m.selectPlaylistLast()
 	}
+	return nil
+}
+
+// gotoPlaying selects the sounding tab's current item, switching to that tab
+// when it is not visible. With no sounding tab it selects the visible tab's
+// current item.
+func (m *Model) gotoPlaying() tea.Cmd {
+	if m.playbackTab >= 0 && m.playbackTab < tabCount && m.playbackTab != m.activeTab {
+		cmd := m.switchTab(m.playbackTab)
+		m.selectCurrent()
+		return cmd
+	}
+	m.selectCurrent()
 	return nil
 }
 
@@ -692,7 +803,7 @@ func (m *Model) playlistOpen() tea.Cmd {
 		return nil
 	}
 	m.beginPlaybackIntent()
-	return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
+	return tea.Batch(m.playItem(m.activeTab, item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
 // playlistRemove removes the selected item. Removing the current item stops
@@ -707,7 +818,8 @@ func (m *Model) playlistRemove() tea.Cmd {
 	}
 	m.bumpQueueEpoch()
 	var stop tea.Cmd
-	if hadPrevious && removed.ID == previous.ID && !m.previewActive {
+	if hadPrevious && removed.ID == previous.ID && !m.previewActive && m.activeOwnsPlayback() {
+		m.playbackTab = -1
 		stop = m.requestTransport(transportAction{kind: transportStop})
 	}
 	m.clampPlaylist()
@@ -736,7 +848,8 @@ func (m *Model) playlistClear() tea.Cmd {
 	m.queue.Clear()
 	m.bumpQueueEpoch()
 	var stop tea.Cmd
-	if !m.previewActive {
+	if !m.previewActive && m.activeOwnsPlayback() {
+		m.playbackTab = -1
 		stop = m.requestTransport(transportAction{kind: transportStop})
 	}
 	m.playlistSelected = 0
@@ -1098,8 +1211,8 @@ func (m *Model) waitForPlayerEvent() tea.Cmd {
 	}
 }
 
-// handlePlayerEvent advances on a finished stream and reports errors. It never
-// advances for anything else.
+// handlePlayerEvent advances the sounding queue on a finished stream and
+// reports errors. It never advances for anything else.
 func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 	if !msg.ok {
 		return nil
@@ -1107,9 +1220,15 @@ func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 	if cmd, handled := m.handlePreviewEvent(msg); handled {
 		return cmd
 	}
-	// A late finished/error event from a stream that has already been replaced
-	// must not advance or report against the newly current item.
-	current, hasCurrent := m.queue.Current()
+	// Match against the sounding tab, not the visible one. Item IDs restart at
+	// 1 in every queue, so comparing against the visible tab could consume an
+	// event that belongs elsewhere.
+	tab := m.playbackTab
+	if tab < 0 || tab >= tabCount {
+		return nil
+	}
+	q := m.tabs[tab].queue
+	current, hasCurrent := q.Current()
 	if !hasCurrent || msg.event.ItemID != current.ID {
 		return nil
 	}
@@ -1117,17 +1236,18 @@ func (m *Model) handlePlayerEvent(msg playerEventMsg) tea.Cmd {
 
 	switch msg.event.Type {
 	case player.EventFinished:
-		previous, hadPrevious := m.queue.Current()
-		selected, hadSelected := m.selectedPlaylistItem()
-		item, ok := m.queue.Next(true)
+		previous, hadPrevious := q.Current()
+		selected, hadSelected := m.selectedPlaylistItemFor(tab)
+		item, ok := q.Next(true)
 		if !ok {
-			m.clampPlaylist()
-			m.setStatusOK("end of queue")
+			m.playbackTab = -1
+			m.clampTabSelection(tab)
+			m.setStatusOK(m.queueEndStatus(tab, "end of queue"))
 			return nil
 		}
 		m.bumpQueueEpoch()
-		m.followSelection(previous, selected, hadPrevious, hadSelected)
-		return tea.Batch(m.playItem(item, "playing "+displayTitle(item)), m.saveQueue())
+		m.followSelectionFor(tab, previous, selected, hadPrevious, hadSelected)
+		return tea.Batch(m.playItem(tab, item, "playing "+displayTitle(item)), m.saveQueue())
 
 	case player.EventError:
 		err := msg.event.Err

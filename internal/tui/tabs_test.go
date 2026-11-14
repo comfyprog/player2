@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"player2/internal/player"
 	"player2/internal/queue"
 )
 
@@ -218,5 +220,263 @@ func TestEmptyTabShowsTabNumber(t *testing.T) {
 	plain := ansi.Strip(strings.Join(m.playlistLines(40, 6), "\n"))
 	if !strings.Contains(plain, "Tab 5 is empty") {
 		t.Errorf("empty tab render missing tab number:\n%s", plain)
+	}
+}
+
+// playSelected starts the visible tab's selected item and returns the model
+// after the serialized transport result lands.
+func playSelected(t *testing.T, m *Model) *Model {
+	t.Helper()
+	m.focus = PanePlaylist
+	next, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	return runCmd(t, next, cmd)
+}
+
+func TestSwitchTabKeepsAudioOnSoundingTab(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1, playlistItem("One One", "", 1, time.Minute))
+	m.playlistSelected = 0
+
+	m = playSelected(t, m)
+	if m.playbackTab != 0 {
+		t.Fatalf("playbackTab = %d after play, want 0", m.playbackTab)
+	}
+
+	m = runCmd(t, m, m.switchTab(1))
+	if m.activeTab != 1 {
+		t.Fatalf("activeTab = %d, want 1", m.activeTab)
+	}
+	if m.playbackTab != 0 {
+		t.Errorf("switching tabs changed playbackTab to %d", m.playbackTab)
+	}
+	if len(fp.played) != 1 || fp.played[0].Title != "Zero One" {
+		t.Fatalf("played = %#v, want only Zero One", fp.played)
+	}
+
+	header := ansi.Strip(m.headerLine())
+	if !strings.Contains(header, "Zero One") || !strings.Contains(header, "tab 0") {
+		t.Errorf("header = %q, want sounding item from tab 0", header)
+	}
+
+	plain := ansi.Strip(strings.Join(m.playlistLines(40, 6), "\n"))
+	if !strings.Contains(plain, "One One") {
+		t.Errorf("visible tab does not show tab 1's item:\n%s", plain)
+	}
+	if !strings.Contains(plain, "0▶") || !strings.Contains(plain, "[1]") {
+		t.Errorf("tab strip lacks sounding/active markers:\n%s", plain)
+	}
+}
+
+func TestNextFollowsSoundingTabWhileAnotherTabIsVisible(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.playlistSelected = 0
+	m = playSelected(t, m)
+	m = runCmd(t, m, m.switchTab(1))
+	m.playlistSelected = 0
+
+	next, cmd := pressForCmd(t, m, runeKey('n'))
+	m = runCmd(t, next, cmd)
+
+	if m.activeTab != 1 {
+		t.Errorf("activeTab = %d, want 1", m.activeTab)
+	}
+	if got := m.tabs[0].queue.Snapshot().Current; got != 1 {
+		t.Errorf("sounding tab current = %d, want 1", got)
+	}
+	if got := m.tabs[1].queue.Snapshot().Current; got != 0 {
+		t.Errorf("visible tab current = %d, want 0", got)
+	}
+	if len(fp.played) != 2 || fp.played[1].Title != "Zero Two" {
+		t.Fatalf("played = %#v, want Zero Two second", fp.played)
+	}
+	if m.tabs[0].selected != 1 {
+		t.Errorf("sounding tab selection = %d, want 1", m.tabs[0].selected)
+	}
+	if m.playlistSelected != 0 {
+		t.Errorf("visible tab selection = %d, want 0", m.playlistSelected)
+	}
+}
+
+func TestAutoAdvanceHiddenTabUpdatesThatQueue(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.playlistSelected = 0
+	m = playSelected(t, m)
+	m = runCmd(t, m, m.switchTab(1))
+
+	current, ok := m.tabs[0].queue.Current()
+	if !ok {
+		t.Fatal("tab 0 has no current item")
+	}
+	if current.ID != 1 {
+		t.Fatalf("tab 0 current ID = %d, want 1", current.ID)
+	}
+	other, _ := m.tabs[1].queue.Current()
+	if other.ID != current.ID {
+		t.Fatalf("test setup: tab 1 current ID = %d, want collision with %d", other.ID, current.ID)
+	}
+
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: current.ID},
+		ok:    true,
+	})
+	m = runCmd(t, m, cmd)
+
+	if got := m.tabs[0].queue.Snapshot().Current; got != 1 {
+		t.Errorf("sounding tab current = %d, want 1", got)
+	}
+	if got := m.tabs[1].queue.Snapshot().Current; got != 0 {
+		t.Errorf("visible tab current = %d, want 0 (must not consume tab 0's event)", got)
+	}
+	if m.activeTab != 1 {
+		t.Errorf("activeTab = %d, want 1", m.activeTab)
+	}
+	if m.playbackTab != 0 {
+		t.Errorf("playbackTab = %d, want 0", m.playbackTab)
+	}
+	if len(fp.played) != 2 || fp.played[1].Title != "Zero Two" {
+		t.Fatalf("played = %#v, want Zero Two second", fp.played)
+	}
+}
+
+func TestStopClearsSoundingContext(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.playlistSelected = 0
+	m = playSelected(t, m)
+	m = runCmd(t, m, m.switchTab(1))
+
+	next, cmd := pressForCmd(t, m, runeKey('x'))
+	m = runCmd(t, next, cmd)
+	if m.playbackTab != -1 {
+		t.Fatalf("playbackTab = %d after stop, want -1", m.playbackTab)
+	}
+
+	next, cmd = pressForCmd(t, m, runeKey('n'))
+	m = runCmd(t, next, cmd)
+	if m.activeTab != 1 {
+		t.Errorf("activeTab = %d, want 1", m.activeTab)
+	}
+	if got := m.tabs[1].queue.Snapshot().Current; got != 1 {
+		t.Errorf("visible tab current = %d after stop+next, want 1", got)
+	}
+	if got := m.tabs[0].queue.Snapshot().Current; got != 0 {
+		t.Errorf("old sounding tab current = %d, want 0", got)
+	}
+	if m.playbackTab != 1 {
+		t.Errorf("playbackTab = %d after next, want 1", m.playbackTab)
+	}
+	if last := fp.played[len(fp.played)-1]; last.Title != "One Two" {
+		t.Errorf("last played = %q, want One Two", last.Title)
+	}
+}
+
+func TestGotoPlayingSwitchesToSoundingTab(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	for i := 0; i < 10; i++ {
+		m.tabs[0].queue.Append(playlistItem("Zero", "", i+1, time.Minute))
+	}
+	m.tabs[0].queue.SetCurrent(7)
+	fillTab(t, m, 1, playlistItem("One", "", 1, time.Minute))
+	m.playlistSelected = 7
+	m = playSelected(t, m)
+	m = runCmd(t, m, m.switchTab(1))
+	m.playlistSelected = 0
+
+	next, cmd := pressForCmd(t, m, runeKey('g'))
+	m = runCmd(t, next, cmd)
+
+	if m.activeTab != 0 {
+		t.Errorf("activeTab = %d, want 0", m.activeTab)
+	}
+	if m.playlistSelected != 7 {
+		t.Errorf("selection = %d, want 7", m.playlistSelected)
+	}
+}
+
+func TestClearingNonSoundingTabKeepsPlayback(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.playlistSelected = 0
+	m = playSelected(t, m)
+	m = runCmd(t, m, m.switchTab(1))
+
+	m = runCmd(t, m, m.playlistClear())
+
+	if fp.stops != 0 {
+		t.Errorf("clear of non-sounding tab stopped playback %d time(s)", fp.stops)
+	}
+	if m.playbackTab != 0 {
+		t.Errorf("playbackTab = %d, want 0", m.playbackTab)
+	}
+	if got := m.tabs[0].queue.Len(); got != 2 {
+		t.Errorf("sounding tab length = %d, want 2", got)
+	}
+	if got := m.tabs[1].queue.Len(); got != 0 {
+		t.Errorf("cleared tab length = %d, want 0", got)
+	}
+}
+
+func TestRemovingCurrentFromNonSoundingTabKeepsPlayback(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	fillTab(t, m, 0,
+		playlistItem("Zero One", "", 1, time.Minute),
+		playlistItem("Zero Two", "", 2, time.Minute),
+	)
+	fillTab(t, m, 1,
+		playlistItem("One One", "", 1, time.Minute),
+		playlistItem("One Two", "", 2, time.Minute),
+	)
+	m.playlistSelected = 0
+	m = playSelected(t, m)
+	m = runCmd(t, m, m.switchTab(1))
+	m.playlistSelected = 0
+
+	m = runCmd(t, m, m.playlistRemove())
+
+	if fp.stops != 0 {
+		t.Errorf("removing a non-sounding tab's current item stopped playback %d time(s)", fp.stops)
+	}
+	if m.playbackTab != 0 {
+		t.Errorf("playbackTab = %d, want 0", m.playbackTab)
+	}
+	if got := m.tabs[0].queue.Len(); got != 2 {
+		t.Errorf("sounding tab length = %d, want 2", got)
+	}
+	if got := m.tabs[1].queue.Len(); got != 1 {
+		t.Errorf("edited tab length = %d, want 1", got)
 	}
 }

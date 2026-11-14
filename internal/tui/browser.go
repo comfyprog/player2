@@ -791,11 +791,7 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 		return queueWork
 	}
 
-	play := m.requestTransport(transportAction{
-		kind:   transportPlay,
-		item:   item,
-		status: msg.status,
-	})
+	play := m.playItem(m.activeTab, item, msg.status)
 	if play == nil {
 		m.setStatusOK(msg.status)
 		return queueWork

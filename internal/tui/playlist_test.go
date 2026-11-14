@@ -556,6 +556,7 @@ func TestAutoAdvanceFinished(t *testing.T) {
 		playlistItem("Two", "", 2, time.Minute),
 	)
 	m.playlistSelected = 0
+	m.playbackTab = 0
 
 	current, _ := m.queue.Current()
 	cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
@@ -594,6 +595,7 @@ func TestAutoAdvanceRepeatOneAndRepeatAll(t *testing.T) {
 			playlistItem("Two", "", 2, time.Minute),
 		)
 		m.queue.SetRepeat(queue.RepeatOne)
+		m.playbackTab = 0
 
 		current, _ := m.queue.Current()
 		cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
@@ -614,6 +616,7 @@ func TestAutoAdvanceRepeatOneAndRepeatAll(t *testing.T) {
 		)
 		m.queue.SetCurrent(1)
 		m.queue.SetRepeat(queue.RepeatAll)
+		m.playbackTab = 0
 
 		current, _ := m.queue.Current()
 		cmd := m.handlePlayerEvent(playerEventMsg{event: player.Event{Type: player.EventFinished, ItemID: current.ID}, ok: true})
@@ -633,6 +636,7 @@ func TestPlayerErrorEventDoesNotAdvance(t *testing.T) {
 		playlistItem("One", "", 1, time.Minute),
 		playlistItem("Two", "", 2, time.Minute),
 	)
+	m.playbackTab = 0
 
 	current, _ := m.queue.Current()
 	cmd := m.handlePlayerEvent(playerEventMsg{
@@ -1604,6 +1608,7 @@ func TestClosedEventChannelDoesNotResubscribe(t *testing.T) {
 func TestPlayerEventUpdateResubscribes(t *testing.T) {
 	m, _ := newPlaylistModel(t, nil)
 	m.queue.Append(playlistItem("One", "", 1, time.Minute))
+	m.playbackTab = 0
 
 	// Update returns the event handler work plus a fresh wait command.
 	current, _ := m.queue.Current()
@@ -1760,6 +1765,7 @@ func TestStaleFinishedEventDoesNotAdvanceAfterManualNext(t *testing.T) {
 		playlistItem("Two", "", 2, time.Minute),
 	)
 	old, _ := m.queue.Current()
+	m.playbackTab = 0
 
 	m, cmd := pressForCmd(t, m, runeKey('n'))
 	m = runCmd(t, m, cmd)

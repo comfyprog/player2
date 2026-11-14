@@ -129,6 +129,9 @@ func (m *Model) nowPlayingLabel() string {
 	if m.previewActive {
 		return "preview: " + label
 	}
+	if m.playbackTab >= 0 && m.playbackTab < tabCount && m.playbackTab != m.activeTab {
+		return fmt.Sprintf("%s [tab %d]", label, m.playbackTab)
+	}
 	return label
 }
 
@@ -339,9 +342,15 @@ func helpEntry(binding Binding) string {
 	return keys + "  " + binding.Description
 }
 
-// nowPlaying reports whether item is the queue's current item. Task 12 uses it
-// to draw the marker and playing style.
+// nowPlaying reports whether item is the visible tab's current item. When a
+// different tab owns the sound, no row in the visible queue is marked.
 func (m *Model) nowPlaying(itemID uint64) bool {
+	if m.previewActive {
+		return false
+	}
+	if m.playbackTab >= 0 && m.playbackTab != m.activeTab {
+		return false
+	}
 	current, ok := m.queue.Current()
 	return ok && current.ID == itemID
 }

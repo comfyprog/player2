@@ -55,6 +55,7 @@ func (m *Model) startPreview(entry library.Entry) tea.Cmd {
 	item.ID = ^uint64(0) - (m.previewSeq - 1)
 	m.previewItem = item
 	m.previewActive = true
+	m.playbackTab = -1
 	m.beginPlaybackIntent()
 
 	play := m.requestTransport(transportAction{
@@ -160,10 +161,15 @@ func (m *Model) clearPreview() {
 }
 
 // playbackItem returns the item currently producing sound: the preview when
-// one is active, otherwise the queue's current item.
+// one is active, the sounding tab's current item while playing or paused, and
+// the visible tab's current item otherwise.
 func (m *Model) playbackItem() (queue.Item, bool) {
 	if m.previewActive {
 		return m.previewItem, true
+	}
+	playing := m.status.State == player.StatePlaying || m.status.State == player.StatePaused
+	if playing && m.playbackTab >= 0 && m.playbackTab < tabCount {
+		return m.tabs[m.playbackTab].queue.Current()
 	}
 	return m.queue.Current()
 }
@@ -179,6 +185,7 @@ func (m *Model) beginPlaybackIntent() uint64 {
 // still runs outside Update.
 func (m *Model) stopPlayback() tea.Cmd {
 	m.clearPreview()
+	m.playbackTab = -1
 	m.beginPlaybackIntent()
 	return m.requestTransport(transportAction{kind: transportStop})
 }
