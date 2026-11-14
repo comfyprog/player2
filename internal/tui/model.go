@@ -459,6 +459,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.openSavePrompt()
 	}
 
+	if index, ok := tabActionIndex(action); ok {
+		return m, m.switchTab(index)
+	}
+
 	if cmd, handled := m.handleTransportAction(action); handled {
 		return m, cmd
 	}

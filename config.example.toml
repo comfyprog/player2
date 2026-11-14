@@ -59,6 +59,16 @@ error = "196"   # errors and invalid entries
 quit = ["q", "ctrl+c"]          # exit player2
 help = ["?"]                    # show the full key map
 switch_pane = ["tab"]           # move focus between browser and queue
+tab_0 = ["alt+0"]               # show playlist tab 0
+tab_1 = ["alt+1"]               # show playlist tab 1
+tab_2 = ["alt+2"]               # show playlist tab 2
+tab_3 = ["alt+3"]               # show playlist tab 3
+tab_4 = ["alt+4"]               # show playlist tab 4
+tab_5 = ["alt+5"]               # show playlist tab 5
+tab_6 = ["alt+6"]               # show playlist tab 6
+tab_7 = ["alt+7"]               # show playlist tab 7
+tab_8 = ["alt+8"]               # show playlist tab 8
+tab_9 = ["alt+9"]               # show playlist tab 9
 toggle_zoom = ["z"]             # show only the focused pane
 search = ["/"]                  # filter the browser by substring
 

@@ -201,15 +201,15 @@ func TestViewHelpShowsAllBindingsAtNormalSize(t *testing.T) {
 
 	plain := ansi.Strip(m.View().Content)
 	bindings := m.keys.Bindings()
-	if len(bindings) != 36 {
-		t.Fatalf("bindings = %d, want 36", len(bindings))
+	if len(bindings) != 46 {
+		t.Fatalf("bindings = %d, want 46", len(bindings))
 	}
 	for _, binding := range bindings {
 		if !strings.Contains(plain, binding.Description) {
 			t.Errorf("help overlay missing action %q (%s)", binding.Action, binding.Description)
 		}
 	}
-	if !strings.Contains(plain, "Keys 1-18/18") {
+	if !strings.Contains(plain, "Keys 1-23/23") {
 		t.Errorf("help title lacks full-range indicator: %q", firstLine(plain))
 	}
 }
@@ -234,7 +234,7 @@ func TestViewHelpScrollsToLastBindingAtMinimumSize(t *testing.T) {
 	if !strings.Contains(plain, "Go to playing") {
 		t.Errorf("last binding unreachable after scrolling: %q", plain)
 	}
-	if !strings.Contains(plain, "Keys 13-18/18") {
+	if !strings.Contains(plain, "Keys 18-23/23") {
 		t.Errorf("help title does not show the scrolled position: %q", firstLine(plain))
 	}
 	for i, line := range strings.Split(m.View().Content, "\n") {

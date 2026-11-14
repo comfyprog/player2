@@ -223,6 +223,27 @@ func TestEmptyTabShowsTabNumber(t *testing.T) {
 	}
 }
 
+func TestAltDigitSwitchesVisibleTab(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	fillTab(t, m, 3, playlistItem("Three", "", 1, time.Minute))
+
+	next, cmd := pressForCmd(t, m, tea.KeyPressMsg{Code: '3', Mod: tea.ModAlt})
+	m = runCmd(t, next, cmd)
+	if m.activeTab != 3 {
+		t.Fatalf("activeTab = %d after alt+3, want 3", m.activeTab)
+	}
+	plain := ansi.Strip(strings.Join(m.playlistLines(40, 6), "\n"))
+	if !strings.Contains(plain, "[3]") || !strings.Contains(plain, "Three") {
+		t.Errorf("tab 3 not visible after alt+3:\n%s", plain)
+	}
+
+	next, cmd = pressForCmd(t, m, tea.KeyPressMsg{Code: '0', Mod: tea.ModAlt})
+	m = runCmd(t, next, cmd)
+	if m.activeTab != 0 {
+		t.Errorf("activeTab = %d after alt+0, want 0", m.activeTab)
+	}
+}
+
 // playSelected starts the visible tab's selected item and returns the model
 // after the serialized transport result lands.
 func playSelected(t *testing.T, m *Model) *Model {

@@ -15,6 +15,16 @@ const (
 	ActionQuit         Action = "quit"
 	ActionHelp         Action = "help"
 	ActionSwitchPane   Action = "switch_pane"
+	ActionTab0         Action = "tab_0"
+	ActionTab1         Action = "tab_1"
+	ActionTab2         Action = "tab_2"
+	ActionTab3         Action = "tab_3"
+	ActionTab4         Action = "tab_4"
+	ActionTab5         Action = "tab_5"
+	ActionTab6         Action = "tab_6"
+	ActionTab7         Action = "tab_7"
+	ActionTab8         Action = "tab_8"
+	ActionTab9         Action = "tab_9"
 	ActionToggleZoom   Action = "toggle_zoom"
 	ActionOpen         Action = "open"
 	ActionPreview      Action = "preview"
@@ -55,6 +65,16 @@ var actionOrder = []Action{
 	ActionQuit,
 	ActionHelp,
 	ActionSwitchPane,
+	ActionTab0,
+	ActionTab1,
+	ActionTab2,
+	ActionTab3,
+	ActionTab4,
+	ActionTab5,
+	ActionTab6,
+	ActionTab7,
+	ActionTab8,
+	ActionTab9,
 	ActionToggleZoom,
 	ActionOpen,
 	ActionPreview,
@@ -95,6 +115,16 @@ var actionDescriptions = map[Action]string{
 	ActionQuit:         "Quit",
 	ActionHelp:         "Help",
 	ActionSwitchPane:   "Switch pane",
+	ActionTab0:         "Switch to tab 0",
+	ActionTab1:         "Switch to tab 1",
+	ActionTab2:         "Switch to tab 2",
+	ActionTab3:         "Switch to tab 3",
+	ActionTab4:         "Switch to tab 4",
+	ActionTab5:         "Switch to tab 5",
+	ActionTab6:         "Switch to tab 6",
+	ActionTab7:         "Switch to tab 7",
+	ActionTab8:         "Switch to tab 8",
+	ActionTab9:         "Switch to tab 9",
 	ActionToggleZoom:   "Zoom active pane",
 	ActionOpen:         "Open/play",
 	ActionPreview:      "Preview track",
@@ -128,6 +158,30 @@ var actionDescriptions = map[Action]string{
 	ActionRescan:       "Rescan",
 	ActionClear:        "Clear queue",
 	ActionGotoPlaying:  "Go to playing",
+}
+
+// tabActions maps tab index to the action that switches to it.
+var tabActions = [tabCount]Action{
+	ActionTab0,
+	ActionTab1,
+	ActionTab2,
+	ActionTab3,
+	ActionTab4,
+	ActionTab5,
+	ActionTab6,
+	ActionTab7,
+	ActionTab8,
+	ActionTab9,
+}
+
+// tabActionIndex reports the tab index bound to action.
+func tabActionIndex(action Action) (int, bool) {
+	for index, candidate := range tabActions {
+		if action == candidate {
+			return index, true
+		}
+	}
+	return 0, false
 }
 
 // Binding is one action's keys and help label.

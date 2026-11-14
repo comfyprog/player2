@@ -82,6 +82,16 @@ func TestDefault(t *testing.T) {
 		"quit":          {"q", "ctrl+c"},
 		"help":          {"?"},
 		"switch_pane":   {"tab"},
+		"tab_0":         {"alt+0"},
+		"tab_1":         {"alt+1"},
+		"tab_2":         {"alt+2"},
+		"tab_3":         {"alt+3"},
+		"tab_4":         {"alt+4"},
+		"tab_5":         {"alt+5"},
+		"tab_6":         {"alt+6"},
+		"tab_7":         {"alt+7"},
+		"tab_8":         {"alt+8"},
+		"tab_9":         {"alt+9"},
 		"toggle_zoom":   {"z"},
 		"open":          {"enter"},
 		"preview":       {"shift+enter"},
@@ -182,6 +192,25 @@ pause = ["p"]
 	}
 	if !reflect.DeepEqual(cfg.Keys["next"], []string{"n"}) {
 		t.Errorf("Keys[next] = %v, want defaults", cfg.Keys["next"])
+	}
+}
+
+func TestLoadTabBindingOverride(t *testing.T) {
+	setHome(t)
+	path := writeConfig(t, t.TempDir(), `
+[keys]
+tab_3 = ["ctrl+alt+3"]
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Keys["tab_3"], []string{"ctrl+alt+3"}) {
+		t.Errorf("Keys[tab_3] = %v, want [ctrl+alt+3]", cfg.Keys["tab_3"])
+	}
+	if !reflect.DeepEqual(cfg.Keys["tab_4"], []string{"alt+4"}) {
+		t.Errorf("Keys[tab_4] = %v, want default alt+4", cfg.Keys["tab_4"])
 	}
 }
 

@@ -14,6 +14,16 @@ var defaultKeyTable = map[Action][]string{
 	ActionQuit:         {"q", "ctrl+c"},
 	ActionHelp:         {"?"},
 	ActionSwitchPane:   {"tab"},
+	ActionTab0:         {"alt+0"},
+	ActionTab1:         {"alt+1"},
+	ActionTab2:         {"alt+2"},
+	ActionTab3:         {"alt+3"},
+	ActionTab4:         {"alt+4"},
+	ActionTab5:         {"alt+5"},
+	ActionTab6:         {"alt+6"},
+	ActionTab7:         {"alt+7"},
+	ActionTab8:         {"alt+8"},
+	ActionTab9:         {"alt+9"},
 	ActionToggleZoom:   {"z"},
 	ActionOpen:         {"enter"},
 	ActionPreview:      {"shift+enter"},
@@ -53,6 +63,16 @@ var wantActionOrder = []Action{
 	ActionQuit,
 	ActionHelp,
 	ActionSwitchPane,
+	ActionTab0,
+	ActionTab1,
+	ActionTab2,
+	ActionTab3,
+	ActionTab4,
+	ActionTab5,
+	ActionTab6,
+	ActionTab7,
+	ActionTab8,
+	ActionTab9,
 	ActionToggleZoom,
 	ActionOpen,
 	ActionPreview,
@@ -242,5 +262,34 @@ func TestKeyMapRejectsUnknownAction(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}
+	}
+}
+
+func TestTabBindingsAreConfigurable(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys["tab_3"] = []string{"f3"}
+
+	km, err := NewKeyMap(cfg)
+	if err != nil {
+		t.Fatalf("NewKeyMap: %v", err)
+	}
+	if got := km.Keys(ActionTab3); !reflect.DeepEqual(got, []string{"f3"}) {
+		t.Errorf("Keys(ActionTab3) = %v, want [f3]", got)
+	}
+	if got, ok := km.Action("f3"); !ok || got != ActionTab3 {
+		t.Errorf("Action(f3) = %q, %v; want %q, true", got, ok, ActionTab3)
+	}
+}
+
+func TestDuplicateTabBindingRejected(t *testing.T) {
+	cfg := config.Default()
+	cfg.Keys["help"] = []string{"alt+3"}
+
+	_, err := NewKeyMap(cfg)
+	if err == nil {
+		t.Fatal("NewKeyMap accepted a duplicate tab binding")
+	}
+	if !strings.Contains(err.Error(), "alt+3") {
+		t.Errorf("error %q does not mention the duplicate key", err)
 	}
 }
