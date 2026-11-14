@@ -95,6 +95,7 @@ move_up = ["K"]                 # move selected queue item up
 move_down = ["J"]               # move selected queue item down
 clear = ["c"]                   # clear the queue (asks for confirmation)
 save_playlist = ["w"]           # save the queue as an M3U file
+name_tab = ["T"]                # set or clear the active tab's name
 goto_playing = ["g"]            # select the current queue item
 
 # Playback

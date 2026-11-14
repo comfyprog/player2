@@ -108,6 +108,7 @@ All keys are configurable; these are the defaults.
 | Toggle tags | `t` | Switch the browser between filenames and tags |
 | Track info | `i` | Show details for the highlighted audio file |
 | Save playlist | `w` | Save the active tab as an M3U file |
+| Name tab | `T` | Set or clear the active tab's name |
 | Rescan | `R` | Reload the current directory |
 | Clear queue | `c` | Clear the active tab (with confirmation) |
 | Go to playing | `g` | Jump to the sounding tab's current item |
@@ -178,15 +179,20 @@ tab that owns the current sound is marked with `▶`.
   the sounding context; after that, transport falls back to the visible tab.
 - `g` jumps to the sounding tab when it is not visible, selects its current
   item, and leaves playback alone.
-- All ten tab queues, their shuffle/repeat settings, and the visible tab are
-  saved in the state JSON and restored at startup. `restore_queue = false`
-  starts every tab empty.
+- `T` (`name_tab` in `[keys]`) opens a prompt for the active tab. The current
+  name is prefilled; Enter saves it and an empty input clears it. A named active
+  tab shows its name on a line directly below the numbered strip, and that line
+  takes one row from the queue view. Inactive tab names are never shown.
+- All ten tab queues, their names, shuffle/repeat settings, and the visible tab
+  are saved in the state JSON and restored at startup. `restore_queue = false`
+  starts every tab empty and unnamed.
 - Some terminal emulators reserve `Alt+digit` for their own tab switching. If
   your terminal does not deliver the key to player2, rebind `tab_0`…`tab_9` in
   `[keys]`.
 
-Tab queues are session state, not playlist files. `w` writes only the visible
-tab to an `.m3u`; loading an `.m3u` replaces the visible tab.
+Tab queues and names are session state, not playlist files. `w` writes only the
+visible tab's queue to an `.m3u`; the tab name is not included, and loading an
+`.m3u` replaces the visible tab's queue without changing its name.
 
 ## Configuration
 
@@ -235,8 +241,9 @@ Notes:
 - `extra_audio_extensions` adds extensions (for example `[".m4b"]`) that the
   scanner should treat as audio. Files are still decoded by FFmpeg.
 - `[colors]` values are ANSI 256-color indexes.
-- `restore_queue` restores all ten playlist tabs and the last visible tab. With
-  it disabled, every tab starts empty and the next save replaces the state file.
+- `restore_queue` restores all ten playlist tabs, their names, and the last
+  visible tab. With it disabled, every tab starts empty and unnamed, and the next
+  save replaces the state file.
 - `[keys]` action names are the lowercase names shown in the key table; each
   value replaces that action's default binding. The ten tab actions are named
   `tab_0` through `tab_9`.
@@ -346,8 +353,8 @@ Manual checks, when a real terminal and audio device are available:
 - Save the active tab with `w`, load the `.m3u` from the browser, and confirm entries.
 - Start playback in tab 0, switch to tab 2 with `Alt+2`, and confirm audio and
   the header stay on tab 0.
-- Restart with `restore_queue = true` and confirm all ten tabs and the visible
-  tab return.
+- Name a tab with `T`, restart with `restore_queue = true`, and confirm the tab
+  names and visible tab return.
 - Resize the terminal and confirm the layout stays usable.
 - Open a malformed CUE and confirm it is displayed as an error while the audio
   file remains visible.

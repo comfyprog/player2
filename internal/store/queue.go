@@ -3,9 +3,9 @@
 // LoadTabs prunes references to missing or non-regular local files in every
 // tab and preserves each tab's current item when it survives. SaveTabs writes
 // atomically through a temporary file and leaves the destination with mode
-// 0600. Version 1 queue files are read as a single tab. The package performs
-// local file I/O only, starts no goroutines, and keeps no cache; the caller
-// serializes access.
+// 0600. Version 1 queue files are read as a single unnamed tab and version 2
+// files as unnamed tabs. The package performs local file I/O only, starts no
+// goroutines, and keeps no cache; the caller serializes access.
 package store
 
 import (
@@ -21,7 +21,7 @@ import (
 
 const (
 	// currentVersion is the JSON schema version this package writes.
-	currentVersion = 2
+	currentVersion = 3
 
 	// maxTabs is the fixed number of playlist tabs supported by the UI.
 	maxTabs = 10
@@ -50,18 +50,27 @@ type diskStateV1 struct {
 	Queue   queue.Snapshot `json:"queue"`
 }
 
-// diskStateV2 is the tabbed envelope. Tabs is ordered by tab index.
+// diskStateV2 is the original tabbed envelope, without tab names.
 type diskStateV2 struct {
 	Version   int              `json:"version"`
 	ActiveTab int              `json:"active_tab"`
 	Tabs      []queue.Snapshot `json:"tabs"`
 }
 
+// diskStateV3 is the current tabbed envelope with optional tab names. Tabs is
+// ordered by tab index.
+type diskStateV3 struct {
+	Version   int                 `json:"version"`
+	ActiveTab int                 `json:"active_tab"`
+	Tabs      []queue.TabSnapshot `json:"tabs"`
+}
+
 // LoadTabs reads the persisted playlist tabs. A missing file yields active tab
-// 0 and no tabs. A version 1 file is returned as a single tab at index 0.
-// Items whose audio or CUE file is missing or not a regular file are pruned;
-// skipped reports how many items were dropped across all tabs.
-func (s *Store) LoadTabs() (active int, tabs []queue.Snapshot, skipped int, err error) {
+// 0 and no tabs. Version 1 files are returned as a single unnamed tab at index
+// 0, and version 2 files as unnamed tabs. Items whose audio or CUE file is
+// missing or not a regular file are pruned; skipped reports how many items were
+// dropped across all tabs.
+func (s *Store) LoadTabs() (active int, tabs []queue.TabSnapshot, skipped int, err error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -82,7 +91,7 @@ func (s *Store) LoadTabs() (active int, tabs []queue.Snapshot, skipped int, err 
 			return 0, nil, 0, fmt.Errorf("store: parse %s: %w", s.path, err)
 		}
 		snapshot, skipped := pruneSnapshot(state.Queue)
-		return 0, []queue.Snapshot{snapshot}, skipped, nil
+		return 0, []queue.TabSnapshot{{Snapshot: snapshot}}, skipped, nil
 
 	case 2:
 		var state diskStateV2
@@ -95,39 +104,71 @@ func (s *Store) LoadTabs() (active int, tabs []queue.Snapshot, skipped int, err 
 				s.path, len(state.Tabs), maxTabs,
 			)
 		}
+		active, tabs, skipped := pruneTabs(state.ActiveTab, state.Tabs)
+		return active, tabs, skipped, nil
 
-		tabs := make([]queue.Snapshot, len(state.Tabs))
-		for i, snapshot := range state.Tabs {
+	case 3:
+		var state diskStateV3
+		if err := json.Unmarshal(data, &state); err != nil {
+			return 0, nil, 0, fmt.Errorf("store: parse %s: %w", s.path, err)
+		}
+		if len(state.Tabs) > maxTabs {
+			return 0, nil, 0, fmt.Errorf(
+				"store: %s: %d tabs exceeds maximum %d",
+				s.path, len(state.Tabs), maxTabs,
+			)
+		}
+
+		tabs := make([]queue.TabSnapshot, len(state.Tabs))
+		for i, tab := range state.Tabs {
 			var dropped int
-			tabs[i], dropped = pruneSnapshot(snapshot)
+			tabs[i] = tab
+			tabs[i].Snapshot, dropped = pruneSnapshot(tab.Snapshot)
 			skipped += dropped
 		}
-		active := state.ActiveTab
-		if active < 0 || active >= len(tabs) {
-			active = 0
-		}
-		return active, tabs, skipped, nil
+		return clampActive(state.ActiveTab, len(tabs)), tabs, skipped, nil
 
 	default:
 		return 0, nil, 0, fmt.Errorf(
-			"store: %s: unsupported schema version %d (want 1 or %d)",
+			"store: %s: unsupported schema version %d (want 1, 2 or %d)",
 			s.path, header.Version, currentVersion,
 		)
 	}
 }
 
+// pruneTabs converts legacy unnamed snapshots into tab snapshots and prunes
+// every queue.
+func pruneTabs(active int, snapshots []queue.Snapshot) (int, []queue.TabSnapshot, int) {
+	tabs := make([]queue.TabSnapshot, len(snapshots))
+	skipped := 0
+	for i, snapshot := range snapshots {
+		var dropped int
+		tabs[i].Snapshot, dropped = pruneSnapshot(snapshot)
+		skipped += dropped
+	}
+	return clampActive(active, len(tabs)), tabs, skipped
+}
+
+// clampActive keeps the visible tab inside the loaded tab set.
+func clampActive(active, count int) int {
+	if active < 0 || active >= count {
+		return 0
+	}
+	return active
+}
+
 // SaveTabs writes all playlist tabs to the store's path. Missing parent
 // directories are created with mode 0700. The write is atomic and the final
 // file has mode 0600. SaveTabs does not mutate its input.
-func (s *Store) SaveTabs(active int, tabs []queue.Snapshot) error {
+func (s *Store) SaveTabs(active int, tabs []queue.TabSnapshot) error {
 	if len(tabs) > maxTabs {
 		return fmt.Errorf("store: cannot save %d tabs (maximum %d)", len(tabs), maxTabs)
 	}
 	if tabs == nil {
-		tabs = []queue.Snapshot{}
+		tabs = []queue.TabSnapshot{}
 	}
 
-	data, err := json.Marshal(diskStateV2{
+	data, err := json.Marshal(diskStateV3{
 		Version:   currentVersion,
 		ActiveTab: active,
 		Tabs:      tabs,

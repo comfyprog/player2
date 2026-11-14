@@ -22,9 +22,21 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+func snapTab(snap queue.Snapshot) queue.TabSnapshot {
+	return queue.TabSnapshot{Snapshot: snap}
+}
+
+func snapTabs(snaps ...queue.Snapshot) []queue.TabSnapshot {
+	tabs := make([]queue.TabSnapshot, len(snaps))
+	for i, snap := range snaps {
+		tabs[i] = snapTab(snap)
+	}
+	return tabs
+}
+
 func saveAndLoad(t *testing.T, path string, snap queue.Snapshot) (queue.Snapshot, int) {
 	t.Helper()
-	if err := New(path).SaveTabs(0, []queue.Snapshot{snap}); err != nil {
+	if err := New(path).SaveTabs(0, snapTabs(snap)); err != nil {
 		t.Fatalf("SaveTabs: %v", err)
 	}
 	_, tabs, skipped, err := New(path).LoadTabs()
@@ -34,7 +46,7 @@ func saveAndLoad(t *testing.T, path string, snap queue.Snapshot) (queue.Snapshot
 	if len(tabs) == 0 {
 		return queue.Snapshot{Items: []queue.Item{}, Current: -1}, skipped
 	}
-	return tabs[0], skipped
+	return tabs[0].Snapshot, skipped
 }
 
 func TestSaveLoadRoundtrip(t *testing.T) {
@@ -75,7 +87,7 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	before := in
 	before.Items = append([]queue.Item(nil), in.Items...)
 
-	if err := s.SaveTabs(0, []queue.Snapshot{in}); err != nil {
+	if err := s.SaveTabs(0, snapTabs(in)); err != nil {
 		t.Fatalf("SaveTabs: %v", err)
 	}
 	if !reflect.DeepEqual(in, before) {
@@ -94,8 +106,8 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read queue: %v", err)
 	}
-	if !strings.Contains(string(data), `"version":2`) {
-		t.Errorf("queue file has no version 2 marker: %s", data)
+	if !strings.Contains(string(data), `"version":3`) {
+		t.Errorf("queue file has no version 3 marker: %s", data)
 	}
 	if !strings.Contains(string(data), `"tabs":`) {
 		t.Errorf("queue file has no tabs array: %s", data)
@@ -111,8 +123,8 @@ func TestSaveLoadRoundtrip(t *testing.T) {
 	if len(tabs) != 1 {
 		t.Fatalf("tabs = %d, want 1", len(tabs))
 	}
-	if !reflect.DeepEqual(tabs[0], in) {
-		t.Errorf("LoadTabs did not roundtrip:\n got %+v\nwant %+v", tabs[0], in)
+	if !reflect.DeepEqual(tabs[0].Snapshot, in) {
+		t.Errorf("LoadTabs did not roundtrip:\n got %+v\nwant %+v", tabs[0].Snapshot, in)
 	}
 }
 
@@ -140,7 +152,7 @@ func TestLoadInvalidData(t *testing.T) {
 	}{
 		{"empty", ""},
 		{"truncated", `{"version":1`},
-		{"wrong version", `{"version":3,"queue":{"items":[],"current":-1}}`},
+		{"wrong version", `{"version":4,"queue":{"items":[],"current":-1}}`},
 		{"missing version", `{"queue":{"items":[],"current":-1}}`},
 		{"wrong queue type", `{"version":1,"queue":"not an object"}`},
 	}
@@ -346,7 +358,7 @@ func TestLoadPreservesAndClampsCurrent(t *testing.T) {
 func TestSaveCreatesParentDirectory(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "state", "player2", "queue.json")
-	if err := New(path).SaveTabs(0, []queue.Snapshot{{Current: -1}}); err != nil {
+	if err := New(path).SaveTabs(0, snapTabs(queue.Snapshot{Current: -1})); err != nil {
 		t.Fatalf("SaveTabs: %v", err)
 	}
 
@@ -389,13 +401,13 @@ func TestSaveOverwritesAtomically(t *testing.T) {
 	path := filepath.Join(stateDir, "queue.json")
 	s := New(path)
 
-	if err := s.SaveTabs(0, []queue.Snapshot{{
+	if err := s.SaveTabs(0, snapTabs(queue.Snapshot{
 		Items:   []queue.Item{{ID: 1, Path: audioA, Title: "A"}},
 		Current: 0,
-	}}); err != nil {
+	})); err != nil {
 		t.Fatalf("first SaveTabs: %v", err)
 	}
-	if err := s.SaveTabs(0, []queue.Snapshot{{
+	if err := s.SaveTabs(0, snapTabs(queue.Snapshot{
 		Items: []queue.Item{
 			{ID: 1, Path: audioA, Title: "A"},
 			{ID: 2, Path: audioB, Title: "B"},
@@ -403,7 +415,7 @@ func TestSaveOverwritesAtomically(t *testing.T) {
 		Current: 1,
 		Shuffle: true,
 		Repeat:  queue.RepeatOne,
-	}}); err != nil {
+	})); err != nil {
 		t.Fatalf("second SaveTabs: %v", err)
 	}
 
@@ -447,7 +459,7 @@ func TestSaveCleansUpTempOnRenameFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := New(target).SaveTabs(0, []queue.Snapshot{{Current: -1}}); err == nil {
+	if err := New(target).SaveTabs(0, snapTabs(queue.Snapshot{Current: -1})); err == nil {
 		t.Fatal("SaveTabs succeeded when the destination was a directory")
 	}
 
@@ -462,9 +474,9 @@ func TestSaveCleansUpTempOnRenameFailure(t *testing.T) {
 	}
 }
 
-func saveTabsAndLoad(t *testing.T, path string, active int, tabs []queue.Snapshot) (int, []queue.Snapshot, int) {
+func saveTabsAndLoad(t *testing.T, path string, active int, tabs []queue.Snapshot) (int, []queue.TabSnapshot, int) {
 	t.Helper()
-	if err := New(path).SaveTabs(active, tabs); err != nil {
+	if err := New(path).SaveTabs(active, snapTabs(tabs...)); err != nil {
 		t.Fatalf("SaveTabs: %v", err)
 	}
 	gotActive, gotTabs, skipped, err := New(path).LoadTabs()
@@ -507,7 +519,7 @@ func TestSaveTabsLoadTabsRoundtrip(t *testing.T) {
 		before[i].Items = append([]queue.Item(nil), tabs[i].Items...)
 	}
 
-	if err := New(path).SaveTabs(1, tabs); err != nil {
+	if err := New(path).SaveTabs(1, snapTabs(tabs...)); err != nil {
 		t.Fatalf("SaveTabs: %v", err)
 	}
 	if !reflect.DeepEqual(tabs, before) {
@@ -526,7 +538,7 @@ func TestSaveTabsLoadTabsRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read queue: %v", err)
 	}
-	for _, marker := range []string{`"version":2`, `"active_tab":1`, `"tabs":`} {
+	for _, marker := range []string{`"version":3`, `"active_tab":1`, `"tabs":`} {
 		if !strings.Contains(string(data), marker) {
 			t.Errorf("queue file missing %s: %s", marker, data)
 		}
@@ -539,8 +551,8 @@ func TestSaveTabsLoadTabsRoundtrip(t *testing.T) {
 	if active != 1 {
 		t.Errorf("active = %d, want 1", active)
 	}
-	if !reflect.DeepEqual(got, tabs) {
-		t.Errorf("LoadTabs did not roundtrip:\n got %+v\nwant %+v", got, tabs)
+	if want := snapTabs(tabs...); !reflect.DeepEqual(got, want) {
+		t.Errorf("LoadTabs did not roundtrip:\n got %+v\nwant %+v", got, want)
 	}
 }
 
@@ -645,7 +657,7 @@ func TestLoadTabsClampsActiveTab(t *testing.T) {
 }
 
 func TestSaveTabsRejectsTooManyTabs(t *testing.T) {
-	tabs := make([]queue.Snapshot, 11)
+	tabs := make([]queue.TabSnapshot, 11)
 	for i := range tabs {
 		tabs[i].Current = -1
 	}
@@ -654,7 +666,7 @@ func TestSaveTabsRejectsTooManyTabs(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "queue.json")
-	writeFile(t, path, `{"version":2,"active_tab":0,"tabs":[{},{},{},{},{},{},{},{},{},{},{}]}`)
+	writeFile(t, path, `{"version":3,"active_tab":0,"tabs":[{},{},{},{},{},{},{},{},{},{},{}]}`)
 	if _, _, _, err := New(path).LoadTabs(); err == nil {
 		t.Fatal("LoadTabs accepted more than ten tabs")
 	}

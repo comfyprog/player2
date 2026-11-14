@@ -38,8 +38,8 @@ type Player interface {
 
 // QueueStore persists and restores the playlist tabs.
 type QueueStore interface {
-	LoadTabs() (active int, tabs []queue.Snapshot, skipped int, err error)
-	SaveTabs(active int, tabs []queue.Snapshot) error
+	LoadTabs() (active int, tabs []queue.TabSnapshot, skipped int, err error)
+	SaveTabs(active int, tabs []queue.TabSnapshot) error
 }
 
 // Prober supplies metadata for plain audio files.

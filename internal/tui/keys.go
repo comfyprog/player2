@@ -55,6 +55,7 @@ const (
 	ActionToggleTags   Action = "toggle_tags"
 	ActionInfo         Action = "info"
 	ActionSavePlaylist Action = "save_playlist"
+	ActionNameTab      Action = "name_tab"
 	ActionRescan       Action = "rescan"
 	ActionClear        Action = "clear"
 	ActionGotoPlaying  Action = "goto_playing"
@@ -105,6 +106,7 @@ var actionOrder = []Action{
 	ActionToggleTags,
 	ActionInfo,
 	ActionSavePlaylist,
+	ActionNameTab,
 	ActionRescan,
 	ActionClear,
 	ActionGotoPlaying,
@@ -155,6 +157,7 @@ var actionDescriptions = map[Action]string{
 	ActionToggleTags:   "Toggle tags",
 	ActionInfo:         "Track info",
 	ActionSavePlaylist: "Save playlist",
+	ActionNameTab:      "Name tab",
 	ActionRescan:       "Rescan",
 	ActionClear:        "Clear queue",
 	ActionGotoPlaying:  "Go to playing",

@@ -122,6 +122,7 @@ func TestDefault(t *testing.T) {
 		"toggle_tags":   {"t"},
 		"info":          {"i"},
 		"save_playlist": {"w"},
+		"name_tab":      {"T"},
 		"rescan":        {"R"},
 		"clear":         {"c"},
 		"goto_playing":  {"g"},

@@ -331,22 +331,24 @@ item IDs with a deterministic injected RNG for tests; append/remove repair it.
 
 `Snapshot` is `{Items, Current, Shuffle, Repeat}` with JSON tags. `Restore`
 validates the snapshot, assigns fresh IDs, clamps/validates current, and rebuilds
-shuffle order. It leaves the queue unchanged on error.
+shuffle order. It leaves the queue unchanged on error. `TabSnapshot` embeds a
+`Snapshot` and adds the tab's optional display name for persistence.
 
 ### Store
 
 `internal/store.Store` reads/writes:
 
 ```json
-{"version":2,"active_tab":0,"tabs":[
-  {"items":[...],"current":0,"shuffle":false,"repeat":0},
+{"version":3,"active_tab":0,"tabs":[
+  {"name":"Jazz","items":[...],"current":0,"shuffle":false,"repeat":0},
   ...
 ]}
 ```
 
 - `LoadTabs` returns `(active, tabs, skipped, err)` and `SaveTabs` writes the
-  same shape. A version 1 file is read as one tab at index 0; older binaries
-  cannot read version 2.
+  same shape using `queue.TabSnapshot`. A version 1 file is read as one unnamed
+  tab at index 0 and version 2 files as unnamed tabs. Older binaries cannot read
+  version 3.
 - Missing file → active tab 0 and no snapshots, no error.
 - Corrupt JSON/unsupported version/more than ten tabs → error.
 - Load prunes items whose audio or CUE path is missing/not a regular file in
@@ -361,8 +363,9 @@ shuffle order. It leaves the queue unchanged on error.
 - `Model.Init` starts an async `store.LoadTabs` when `restore_queue` is true and a
   store is configured.
 - Restore validates every tab into a fresh queue before installing any of them.
-  Missing tabs are padded with empty snapshots; the saved active index selects
-  the visible tab. Nothing auto-plays after restore.
+  Missing tabs are padded with empty snapshots and unnamed tabs. Names are
+  trimmed and stripped of control characters before display. The saved active
+  index selects the visible tab. Nothing auto-plays after restore.
 - `restorePending` is true from construction until a restore succeeds. While true,
   `saveQueue` and `FlushQueue` do not write, so startup cannot overwrite a valid
   tab set with empty in-memory queues.
@@ -417,8 +420,10 @@ View() tea.View
 - a two-row footer (status/progress bar and key hints).
 
 The playlist pane's first row is its tab strip: ten fixed slots, the visible
-tab bracketed, the sounding tab marked with `▶`, and empty tabs dimmed. The
-remaining rows are the visible tab's items.
+tab bracketed, the sounding tab marked with `▶`, and empty tabs dimmed. When the
+visible tab has a name, the next row shows that name; only the active tab's name
+is ever displayed. The remaining rows are the visible tab's items, so the name
+row reduces the queue view by one row.
 
 The model distinguishes the **visible tab** (what the playlist pane edits) from
 the **sounding tab** (which queue owns the player's stream). Switching tabs
@@ -474,9 +479,14 @@ built-in defaults.
 
 ### Playlist and transport
 
-- Playlist rendering shows the tab strip, then the visible tab's current marker,
-  selection, title/artist, CUE track number, right-aligned duration, and scroll
-  offset. Each tab remembers its own selection and scroll offset.
+- Playlist rendering shows the tab strip, an optional active-tab name row, then
+  the visible tab's current marker, selection, title/artist, CUE track number,
+  right-aligned duration, and scroll offset. Each tab remembers its own selection
+  and scroll offset; body-row calculations account for the active tab's name.
+- `T` (`name_tab`) opens a prefilled text prompt for the visible tab. Enter saves
+  a trimmed name, an empty input clears it, and Esc cancels. The prompt captures
+  the tab index when opened. Names persist through the same coalesced queue save
+  as queues and are never written to M3U files.
 - Queue replacement/restore selects the active tab's current item. Manual and
   automatic advance move a tab's selection only when it was already on the
   previous current item.

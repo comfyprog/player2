@@ -56,6 +56,7 @@ type browserLocation struct {
 // its view position while another tab is visible.
 type playlistTab struct {
 	queue    *queue.Queue
+	name     string
 	selected int
 	offset   int
 }
@@ -458,6 +459,8 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ActionSavePlaylist:
 		return m, m.openSavePrompt()
+	case ActionNameTab:
+		return m, m.openNamePrompt()
 	}
 
 	if index, ok := tabActionIndex(action); ok {

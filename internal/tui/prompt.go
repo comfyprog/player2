@@ -21,6 +21,7 @@ type promptMode int
 const (
 	promptNone promptMode = iota
 	promptSavePlaylist
+	promptNameTab
 	promptConfirmOverwrite
 	promptConfirmClear
 )
@@ -38,6 +39,8 @@ type promptState struct {
 	target string
 	// dir is the browser directory captured when the save prompt opened.
 	dir string
+	// tab is the playlist tab captured when the name prompt opened.
+	tab int
 }
 
 // playlistSavedMsg is the result of writing the queue as an M3U playlist.
@@ -82,6 +85,24 @@ func (m *Model) openSavePrompt() tea.Cmd {
 	return m.prompt.input.Focus()
 }
 
+// openNamePrompt starts the name flow for the active playlist tab. The current
+// name is editable in place so Enter without changes is a no-op and clearing
+// the input removes the name.
+func (m *Model) openNamePrompt() tea.Cmd {
+	tab := m.activeTab
+	input := m.newPromptInput(m.tabs[tab].name)
+	input.Placeholder = "unnamed"
+	m.prompt = promptState{
+		mode:    promptNameTab,
+		title:   "Name tab",
+		message: fmt.Sprintf("Tab %d — empty clears the name", tab),
+		hint:    "Enter save — Esc cancel",
+		input:   input,
+		tab:     tab,
+	}
+	return m.prompt.input.Focus()
+}
+
 // saveDirectory returns the directory a relative playlist path resolves
 // against: the CUE file's directory, a selected file's directory, or the
 // browser directory itself.
@@ -116,6 +137,18 @@ func (m *Model) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			return m.submitSavePrompt()
+		}
+		input, cmd := m.prompt.input.Update(msg)
+		m.prompt.input = input
+		return m, cmd
+
+	case promptNameTab:
+		switch key {
+		case "esc", "escape":
+			m.prompt = promptState{}
+			return m, nil
+		case "enter":
+			return m.submitNamePrompt()
 		}
 		input, cmd := m.prompt.input.Update(msg)
 		m.prompt.input = input
@@ -187,6 +220,31 @@ func (m *Model) submitSavePrompt() (tea.Model, tea.Cmd) {
 	return m, m.savePlaylistCmd(abs)
 }
 
+// submitNamePrompt applies the typed name to the tab captured when the prompt
+// opened. Empty and whitespace-only input clears the name.
+func (m *Model) submitNamePrompt() (tea.Model, tea.Cmd) {
+	tab := m.prompt.tab
+	name := strings.TrimSpace(oneLine(m.prompt.input.Value()))
+	m.prompt = promptState{}
+
+	if tab < 0 || tab >= tabCount {
+		m.setStatusError("name tab: invalid tab")
+		return m, nil
+	}
+	if m.tabs[tab].name == name {
+		m.setStatusOK("tab name unchanged")
+		return m, nil
+	}
+
+	m.tabs[tab].name = name
+	if name == "" {
+		m.setStatusOK(fmt.Sprintf("tab %d name cleared", tab))
+	} else {
+		m.setStatusOK(fmt.Sprintf("tab %d named %q", tab, name))
+	}
+	return m, m.saveQueue()
+}
+
 // savePlaylistCmd writes the current queue snapshot as an M3U playlist. File
 // I/O runs in a command so Update never blocks.
 func (m *Model) savePlaylistCmd(path string) tea.Cmd {
@@ -236,7 +294,7 @@ func (m *Model) promptLines(height int) []string {
 	if height > 1 {
 		lines = append(lines, m.styles.Fg.Render(fitPlain(m.prompt.message, m.width)))
 	}
-	if height > 2 && m.prompt.mode == promptSavePlaylist {
+	if height > 2 && (m.prompt.mode == promptSavePlaylist || m.prompt.mode == promptNameTab) {
 		// textinput renders its own cursor and prompt prefix; it is already
 		// constrained to m.width-2 cells, so the finished line is width-safe.
 		lines = append(lines, fitStyled(m.prompt.input.View(), m.width))

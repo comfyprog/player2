@@ -64,7 +64,7 @@ type transportResultMsg struct {
 // a queue changed in the meantime.
 type queueRestoredMsg struct {
 	active  int
-	tabs    []queue.Snapshot
+	tabs    []queue.TabSnapshot
 	skipped int
 	err     error
 	epoch   uint64
@@ -94,9 +94,28 @@ type probeKey struct {
 // probeConcurrency bounds how many metadata probes may run at once.
 const probeConcurrency = 4
 
-// playlistBodyRows is the number of list rows available below the pane title.
+// playlistBodyRows is the number of list rows available below the active tab's
+// title and optional name row.
 func (m *Model) playlistBodyRows() int {
-	return max(m.height-headerRows-footerRows-1, 1)
+	return m.playlistBodyRowsFor(m.activeTab)
+}
+
+// playlistBodyRowsFor returns the list rows available for tab, accounting for
+// the name row that tab would show while active.
+func (m *Model) playlistBodyRowsFor(tab int) int {
+	rows := m.height - headerRows - footerRows - 1
+	if m.tabName(tab) != "" {
+		rows--
+	}
+	return max(rows, 1)
+}
+
+// tabName returns tab's display name, or "" when unset.
+func (m *Model) tabName(tab int) string {
+	if tab < 0 || tab >= tabCount {
+		return ""
+	}
+	return strings.TrimSpace(m.tabs[tab].name)
 }
 
 // playlistBoundsFor clamps a selection and scroll offset for count items and
@@ -165,7 +184,7 @@ func (m *Model) clampTabSelection(tab int) {
 		return
 	}
 	selected, offset := m.tabSelection(tab)
-	selected, offset = playlistBoundsFor(selected, offset, m.tabs[tab].queue.Len(), m.playlistBodyRows())
+	selected, offset = playlistBoundsFor(selected, offset, m.tabs[tab].queue.Len(), m.playlistBodyRowsFor(tab))
 	m.setTabSelection(tab, selected, offset)
 }
 
@@ -230,7 +249,13 @@ func (m *Model) playlistLines(width, height int) []string {
 		lines[i] = blank
 	}
 
-	body := height - 1
+	nameRows := 0
+	if name := m.tabName(m.activeTab); name != "" && height > 1 {
+		nameRows = 1
+		lines[1] = m.styles.PaneFocus.Render(fitPlain(name, width))
+	}
+
+	body := height - 1 - nameRows
 	if body <= 0 {
 		return lines
 	}
@@ -238,7 +263,7 @@ func (m *Model) playlistLines(width, height int) []string {
 	items := m.queue.Snapshot().Items
 	if len(items) == 0 {
 		empty := fmt.Sprintf("Tab %d is empty", m.activeTab)
-		lines[1] = m.styles.Dim.Render(fitPlain(empty, width))
+		lines[1+nameRows] = m.styles.Dim.Render(fitPlain(empty, width))
 		return lines
 	}
 
@@ -261,7 +286,7 @@ func (m *Model) playlistLines(width, height int) []string {
 		if m.focus == PanePlaylist && index == selected {
 			style = m.styles.Selection
 		}
-		lines[row+1] = style.Render(plain)
+		lines[row+1+nameRows] = style.Render(plain)
 	}
 	return lines
 }
@@ -993,13 +1018,16 @@ func (m *Model) saveQueue() tea.Cmd {
 	}
 }
 
-// stateSnapshot copies every tab and the active index for persistence. Queue
-// values are snapshotted on the UI goroutine because queues are not
-// thread-safe.
-func (m *Model) stateSnapshot() (int, []queue.Snapshot) {
-	tabs := make([]queue.Snapshot, tabCount)
+// stateSnapshot copies every tab, its name, and the active index for
+// persistence. Queue values are snapshotted on the UI goroutine because queues
+// are not thread-safe.
+func (m *Model) stateSnapshot() (int, []queue.TabSnapshot) {
+	tabs := make([]queue.TabSnapshot, tabCount)
 	for i := range m.tabs {
-		tabs[i] = m.tabs[i].queue.Snapshot()
+		tabs[i] = queue.TabSnapshot{
+			Name:     m.tabs[i].name,
+			Snapshot: m.tabs[i].queue.Snapshot(),
+		}
 	}
 	return m.activeTab, tabs
 }
@@ -1202,12 +1230,14 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 	// Validate all tabs into fresh queues before installing any of them. A bad
 	// snapshot must not leave a half-restored model.
 	restored := make([]*queue.Queue, tabCount)
+	names := make([]string, tabCount)
 	items := 0
 	nonEmpty := 0
 	for i := 0; i < tabCount; i++ {
 		snapshot := queue.Snapshot{Items: []queue.Item{}, Current: -1}
 		if i < len(msg.tabs) {
-			snapshot = msg.tabs[i]
+			snapshot = msg.tabs[i].Snapshot
+			names[i] = strings.TrimSpace(oneLine(msg.tabs[i].Name))
 		}
 		q := queue.New()
 		if err := q.Restore(snapshot); err != nil {
@@ -1223,6 +1253,7 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 
 	for i := range m.tabs {
 		m.tabs[i].queue = restored[i]
+		m.tabs[i].name = names[i]
 		m.tabs[i].selected = queueCurrentIndex(restored[i])
 		m.tabs[i].offset = m.tabs[i].selected
 	}

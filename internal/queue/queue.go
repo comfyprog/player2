@@ -52,6 +52,13 @@ type Snapshot struct {
 	Repeat  RepeatMode `json:"repeat"`
 }
 
+// TabSnapshot is the persisted state of one playlist tab: its optional display
+// name and its queue. The embedded Snapshot keeps the JSON representation flat.
+type TabSnapshot struct {
+	Name string `json:"name,omitempty"`
+	Snapshot
+}
+
 // Queue is an ordered playlist with a current position.
 type Queue struct {
 	items   []Item

@@ -907,15 +907,15 @@ type blockingStore struct {
 	release chan struct{}
 }
 
-func (s *blockingStore) LoadTabs() (int, []queue.Snapshot, int, error) {
+func (s *blockingStore) LoadTabs() (int, []queue.TabSnapshot, int, error) {
 	return 0, nil, 0, nil
 }
 
-func (s *blockingStore) SaveTabs(active int, tabs []queue.Snapshot) error {
+func (s *blockingStore) SaveTabs(active int, tabs []queue.TabSnapshot) error {
 	s.mu.Lock()
 	s.saved = append(s.saved, savedTabs{
 		active: active,
-		tabs:   append([]queue.Snapshot(nil), tabs...),
+		tabs:   append([]queue.TabSnapshot(nil), tabs...),
 	})
 	s.mu.Unlock()
 	s.started <- struct{}{}
@@ -929,7 +929,7 @@ func (s *blockingStore) snapshots() []queue.Snapshot {
 	out := make([]queue.Snapshot, len(s.saved))
 	for i, saved := range s.saved {
 		if saved.active >= 0 && saved.active < len(saved.tabs) {
-			out[i] = saved.tabs[saved.active]
+			out[i] = saved.tabs[saved.active].Snapshot
 		}
 	}
 	return out
@@ -1102,21 +1102,21 @@ type blockingLoadStore struct {
 	saved    []savedTabs
 }
 
-func (s *blockingLoadStore) LoadTabs() (int, []queue.Snapshot, int, error) {
+func (s *blockingLoadStore) LoadTabs() (int, []queue.TabSnapshot, int, error) {
 	s.started <- struct{}{}
 	<-s.release
 	if s.tabs != nil {
-		return s.active, s.tabs, s.skipped, nil
+		return s.active, fakeTabSnapshots(s.tabs, nil), s.skipped, nil
 	}
-	return s.active, []queue.Snapshot{s.snapshot}, s.skipped, nil
+	return s.active, []queue.TabSnapshot{{Snapshot: s.snapshot}}, s.skipped, nil
 }
 
-func (s *blockingLoadStore) SaveTabs(active int, tabs []queue.Snapshot) error {
+func (s *blockingLoadStore) SaveTabs(active int, tabs []queue.TabSnapshot) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.saved = append(s.saved, savedTabs{
 		active: active,
-		tabs:   append([]queue.Snapshot(nil), tabs...),
+		tabs:   append([]queue.TabSnapshot(nil), tabs...),
 	})
 	return nil
 }
@@ -1137,7 +1137,7 @@ func (s *blockingLoadStore) lastSaved() (queue.Snapshot, bool) {
 	if last.active < 0 || last.active >= len(last.tabs) {
 		return queue.Snapshot{}, false
 	}
-	return last.tabs[last.active], true
+	return last.tabs[last.active].Snapshot, true
 }
 
 func TestLateRestoreDoesNotClobberUserQueue(t *testing.T) {
@@ -1206,7 +1206,7 @@ func TestFlushQueueDoesNotOverwriteBeforeRestore(t *testing.T) {
 		},
 		Current: 0,
 	}
-	if err := diskStore.SaveTabs(0, []queue.Snapshot{existing}); err != nil {
+	if err := diskStore.SaveTabs(0, []queue.TabSnapshot{{Snapshot: existing}}); err != nil {
 		t.Fatalf("seed queue: %v", err)
 	}
 	before, err := os.ReadFile(path)
