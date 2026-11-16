@@ -40,10 +40,12 @@ type Styles struct {
 	Playing   lipgloss.Style
 	Selection lipgloss.Style
 	PaneFocus lipgloss.Style
+	Title     lipgloss.Style
 	Error     lipgloss.Style
 	Progress  lipgloss.Style
 	Header    lipgloss.Style
 	Status    lipgloss.Style
+	Hints     lipgloss.Style
 }
 
 // NewStyles builds the style set, falling back to built-in colors when a
@@ -59,10 +61,30 @@ func NewStyles(colors config.Colors) Styles {
 	// full-screen background; View applies it to the terminal so it covers
 	// every cell, including areas after a nested style resets.
 	bg := lipgloss.NewStyle()
-	if c := backgroundValue(colors.Background); c != nil {
+	if c := optionalColorValue(colors.Background); c != nil {
 		bg = bg.Background(c)
 	}
 	fg := lipgloss.NewStyle().Foreground(lipgloss.NoColor{})
+
+	header := lipgloss.NewStyle().Bold(true)
+	if c := optionalColorValue(colors.Header); c != nil {
+		header = header.Foreground(c)
+	}
+
+	hints := lipgloss.NewStyle().Faint(true)
+	if c := optionalColorValue(colors.Hints); c != nil {
+		hints = hints.Foreground(c)
+	}
+
+	title := accent
+	if c := optionalColorValue(colors.PaneTitle); c != nil {
+		title = c
+	}
+
+	progress := accent
+	if c := optionalColorValue(colors.Progress); c != nil {
+		progress = c
+	}
 
 	return Styles{
 		Bg:        bg,
@@ -78,10 +100,12 @@ func NewStyles(colors config.Colors) Styles {
 		Playing:   lipgloss.NewStyle().Foreground(playing).Bold(true),
 		Selection: lipgloss.NewStyle().Reverse(true),
 		PaneFocus: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		Title:     lipgloss.NewStyle().Foreground(title).Bold(true),
 		Error:     lipgloss.NewStyle().Foreground(invalid).Bold(true),
-		Progress:  lipgloss.NewStyle().Foreground(accent),
-		Header:    lipgloss.NewStyle().Bold(true),
+		Progress:  lipgloss.NewStyle().Foreground(progress),
+		Header:    header,
 		Status:    lipgloss.NewStyle().Faint(true),
+		Hints:     hints,
 	}
 }
 
@@ -98,7 +122,7 @@ func (s Styles) ScreenBackground() color.Color {
 // PaneTitle returns the style for a pane title.
 func (s Styles) PaneTitle(focused bool) lipgloss.Style {
 	if focused {
-		return s.PaneFocus
+		return s.Title
 	}
 	return s.Dim
 }
@@ -111,9 +135,9 @@ func (s Styles) Row(selected bool) lipgloss.Style {
 	return s.Fg
 }
 
-// backgroundValue parses the configured screen background. Empty or invalid
-// values return nil so the terminal's own background shows through.
-func backgroundValue(value string) color.Color {
+// optionalColorValue parses a configured color. Empty or invalid values return
+// nil so the caller can keep its default.
+func optionalColorValue(value string) color.Color {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil

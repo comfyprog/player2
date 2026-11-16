@@ -95,10 +95,7 @@ func (m *Model) browserLines(width, height int) []string {
 		return lines
 	}
 
-	titleStyle := m.styles.Dim
-	if m.focus == PaneBrowser {
-		titleStyle = m.styles.PaneFocus
-	}
+	titleStyle := m.styles.PaneTitle(m.focus == PaneBrowser)
 	lines[0] = titleStyle.Render(fitPlain(m.browserTitle(width), width))
 
 	blank := strings.Repeat(" ", max(width, 0))

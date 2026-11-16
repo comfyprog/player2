@@ -245,6 +245,10 @@ extra_audio_extensions = []
 
 [colors]
 background = ""
+header = ""
+pane_title = ""
+hints = ""
+progress = ""
 accent = "39"
 dir = "33"
 cue = "141"
@@ -271,6 +275,10 @@ Notes:
   scanner should treat as audio. Files are still decoded by FFmpeg.
 - `[colors]` values are ANSI 256-color indexes. `background` fills the entire
   screen; when empty or omitted, the terminal's own background is kept.
+- `header`, `pane_title`, `hints`, and `progress` set the header row, focused
+  pane title, key-hint row, and progress bar. Empty keeps the existing look:
+  the terminal default for `header` and `hints`, and `accent` for `pane_title`
+  and `progress`.
 - `restore_queue` restores all ten playlist tabs, their names, and the last
   visible tab. With it disabled, every tab starts empty and unnamed, and the next
   save replaces the state file.

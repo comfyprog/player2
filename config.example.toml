@@ -47,6 +47,10 @@ extra_audio_extensions = []
 # UI colors as ANSI 256-color indexes.
 [colors]
 background = "" # full-screen background; empty keeps the terminal's own
+header = ""     # top header row; empty keeps the terminal's default
+pane_title = "" # focused pane title; empty uses accent
+hints = ""      # key-hint row; empty keeps the terminal's default
+progress = ""   # progress bar; empty uses accent
 accent = "39"   # focused borders, selected rows, status accents
 dir = "33"      # directories in the browser
 cue = "141"     # CUE sheets and CUE tracks

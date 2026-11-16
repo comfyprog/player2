@@ -542,6 +542,43 @@ func TestViewDefaultBackgroundIsTerminalDefault(t *testing.T) {
 	}
 }
 
+func TestViewElementColorsFromConfig(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.Colors = config.Colors{
+			Accent: "39", Dir: "33", Cue: "141", Playing: "46", Error: "196",
+			Header: "201", PaneTitle: "202", Hints: "203", Progress: "204",
+		}
+	})
+	m = resize(t, m, 100, 30)
+
+	lines := strings.Split(m.View().Content, "\n")
+	findLine := func(needle string) string {
+		t.Helper()
+		for _, line := range lines {
+			if strings.Contains(ansi.Strip(line), needle) {
+				return line
+			}
+		}
+		t.Fatalf("no view line contains %q", needle)
+		return ""
+	}
+
+	cases := []struct {
+		needle string
+		code   string
+	}{
+		{"player2", "38;5;201"},
+		{"Files:", "38;5;202"},
+		{"? help", "38;5;203"},
+		{"Status:", "38;5;204"},
+	}
+	for _, tc := range cases {
+		if line := findLine(tc.needle); !strings.Contains(line, tc.code) {
+			t.Errorf("%q line lacks color %s: %q", tc.needle, tc.code, line)
+		}
+	}
+}
+
 func TestViewAccentTitleFromConfig(t *testing.T) {
 	m := newTestModel(t, func(opts *Options) {
 		opts.Config.Colors = config.Colors{

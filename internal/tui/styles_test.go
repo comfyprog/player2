@@ -70,6 +70,84 @@ func TestNewStylesUsesConfiguredBackground(t *testing.T) {
 	}
 }
 
+func TestNewStylesUsesConfiguredElementColors(t *testing.T) {
+	styles := NewStyles(config.Colors{
+		Accent:    "39",
+		Header:    "201",
+		PaneTitle: "202",
+		Hints:     "203",
+		Progress:  "204",
+	})
+
+	cases := []struct {
+		name  string
+		style lipgloss.Style
+		want  string
+	}{
+		{"header", styles.Header, "38;5;201"},
+		{"pane title", styles.PaneTitle(true), "38;5;202"},
+		{"hints", styles.Hints, "38;5;203"},
+		{"progress", styles.Progress, "38;5;204"},
+	}
+	for _, tc := range cases {
+		if got := tc.style.Render("x"); !strings.Contains(got, tc.want) {
+			t.Errorf("%s render = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	if !styles.Header.GetBold() {
+		t.Error("header style is not bold")
+	}
+	if !styles.Hints.GetFaint() {
+		t.Error("hints style is not faint")
+	}
+	if !styles.PaneTitle(true).GetBold() {
+		t.Error("focused pane title is not bold")
+	}
+	if styles.PaneTitle(false).Render("x") != styles.Dim.Render("x") {
+		t.Error("unfocused pane title does not use the dim style")
+	}
+}
+
+func TestNewStylesElementColorsFallBack(t *testing.T) {
+	styles := NewStyles(config.Colors{})
+
+	if got := styles.Header.Render("x"); strings.Contains(got, "38;5;") {
+		t.Errorf("default header render = %q, want no foreground color", got)
+	}
+	if got := styles.Hints.Render("x"); strings.Contains(got, "38;5;") {
+		t.Errorf("default hints render = %q, want no foreground color", got)
+	}
+	if got := styles.PaneTitle(true).Render("x"); !strings.Contains(got, "38;5;39") {
+		t.Errorf("default focused pane title = %q, want accent 39", got)
+	}
+	if got := styles.Progress.Render("x"); !strings.Contains(got, "38;5;39") {
+		t.Errorf("default progress = %q, want accent 39", got)
+	}
+}
+
+func TestNewStylesInvalidElementColorsFallBack(t *testing.T) {
+	styles := NewStyles(config.Colors{
+		Header:    "not-a-color",
+		PaneTitle: "not-a-color",
+		Hints:     "not-a-color",
+		Progress:  "not-a-color",
+	})
+
+	if got := styles.Header.Render("x"); strings.Contains(got, "38;5;") {
+		t.Errorf("invalid header render = %q, want no foreground color", got)
+	}
+	if got := styles.Hints.Render("x"); strings.Contains(got, "38;5;") {
+		t.Errorf("invalid hints render = %q, want no foreground color", got)
+	}
+	if got := styles.PaneTitle(true).Render("x"); !strings.Contains(got, "38;5;39") {
+		t.Errorf("invalid focused pane title = %q, want accent 39", got)
+	}
+	if got := styles.Progress.Render("x"); !strings.Contains(got, "38;5;39") {
+		t.Errorf("invalid progress = %q, want accent 39", got)
+	}
+}
+
 func TestNewStylesInvalidBackgroundKeepsTerminalDefault(t *testing.T) {
 	styles := NewStyles(config.Colors{Background: "not-a-color"})
 

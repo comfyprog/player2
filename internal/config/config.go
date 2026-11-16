@@ -35,9 +35,13 @@ type Config struct {
 }
 
 // Colors holds the configurable UI colors. Values are ANSI 256-color indexes.
-// An empty Background keeps the terminal's own background.
+// Empty values keep each role's default.
 type Colors struct {
 	Background string `toml:"background"`
+	Header     string `toml:"header"`
+	PaneTitle  string `toml:"pane_title"`
+	Hints      string `toml:"hints"`
+	Progress   string `toml:"progress"`
 	Accent     string `toml:"accent"`
 	Dir        string `toml:"dir"`
 	Cue        string `toml:"cue"`

@@ -365,6 +365,25 @@ func TestLoadBackgroundColor(t *testing.T) {
 	}
 }
 
+func TestLoadElementColors(t *testing.T) {
+	setHome(t)
+	path := writeConfig(t, t.TempDir(), `[colors]
+header = "201"
+pane_title = "202"
+hints = "203"
+progress = "204"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := cfg.Colors
+	if got.Header != "201" || got.PaneTitle != "202" || got.Hints != "203" || got.Progress != "204" {
+		t.Errorf("element colors = %+v, want header 201, pane_title 202, hints 203, progress 204", got)
+	}
+}
+
 func TestLoadUnknownColorKey(t *testing.T) {
 	setHome(t)
 	path := writeConfig(t, t.TempDir(), "[colors]\nforeground = \"1\"\n")

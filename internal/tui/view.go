@@ -290,7 +290,7 @@ func (m *Model) hintsLine() string {
 	}
 
 	plain := fitPlain(strings.Join(parts, "  "), m.width)
-	return m.styles.Dim.Render(plain)
+	return m.styles.Hints.Render(plain)
 }
 
 // helpLines renders the two-column keybinding overlay. The overlay scrolls by
