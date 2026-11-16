@@ -41,6 +41,7 @@ type Styles struct {
 	Selection lipgloss.Style
 	PaneFocus lipgloss.Style
 	Title     lipgloss.Style
+	TabName   lipgloss.Style
 	Error     lipgloss.Style
 	Progress  lipgloss.Style
 	Header    lipgloss.Style
@@ -55,7 +56,19 @@ func NewStyles(colors config.Colors) Styles {
 	dir := colorValue(colors.Dir, defaultDir)
 	cue := colorValue(colors.Cue, defaultCue)
 	playing := colorValue(colors.Playing, defaultPlaying)
-	invalid := colorValue(colors.Error, defaultError)
+	errColor := colorValue(colors.Error, defaultError)
+	invalid := errColor
+	if c := optionalColorValue(colors.Invalid); c != nil {
+		invalid = c
+	}
+	audio := lipgloss.Color(defaultAudio)
+	if c := optionalColorValue(colors.Audio); c != nil {
+		audio = c
+	}
+	playlist := lipgloss.Color(defaultPlaylist)
+	if c := optionalColorValue(colors.Playlist); c != nil {
+		playlist = c
+	}
 
 	// The terminal's own foreground is the default. Bg carries the optional
 	// full-screen background; View applies it to the terminal so it covers
@@ -64,7 +77,14 @@ func NewStyles(colors config.Colors) Styles {
 	if c := optionalColorValue(colors.Background); c != nil {
 		bg = bg.Background(c)
 	}
-	fg := lipgloss.NewStyle().Foreground(lipgloss.NoColor{})
+	fg := lipgloss.NewStyle()
+	if c := optionalColorValue(colors.Foreground); c != nil {
+		fg = fg.Foreground(c)
+	}
+	dim := lipgloss.NewStyle().Faint(true)
+	if c := optionalColorValue(colors.Dim); c != nil {
+		dim = dim.Foreground(c)
+	}
 
 	header := lipgloss.NewStyle().Bold(true)
 	if c := optionalColorValue(colors.Header); c != nil {
@@ -86,25 +106,54 @@ func NewStyles(colors config.Colors) Styles {
 		progress = c
 	}
 
+	selection := lipgloss.NewStyle().Reverse(true)
+	selectionFG := optionalColorValue(colors.SelectionForeground)
+	selectionBG := optionalColorValue(colors.SelectionBackground)
+	if selectionFG != nil || selectionBG != nil {
+		selection = lipgloss.NewStyle()
+		if selectionFG != nil {
+			selection = selection.Foreground(selectionFG)
+		}
+		if selectionBG != nil {
+			selection = selection.Background(selectionBG)
+		}
+	}
+
+	status := lipgloss.NewStyle().Faint(true)
+	if c := optionalColorValue(colors.Status); c != nil {
+		status = status.Foreground(c)
+	}
+
+	focus := accent
+	if c := optionalColorValue(colors.Focus); c != nil {
+		focus = c
+	}
+
+	tabName := accent
+	if c := optionalColorValue(colors.TabName); c != nil {
+		tabName = c
+	}
+
 	return Styles{
 		Bg:        bg,
 		Fg:        fg,
 		Base:      fg,
-		Dim:       lipgloss.NewStyle().Faint(true),
+		Dim:       dim,
 		Accent:    lipgloss.NewStyle().Foreground(accent),
 		Dir:       lipgloss.NewStyle().Foreground(dir),
-		Audio:     lipgloss.NewStyle().Foreground(lipgloss.Color(defaultAudio)),
+		Audio:     lipgloss.NewStyle().Foreground(audio),
 		Cue:       lipgloss.NewStyle().Foreground(cue),
-		Playlist:  lipgloss.NewStyle().Foreground(lipgloss.Color(defaultPlaylist)),
+		Playlist:  lipgloss.NewStyle().Foreground(playlist),
 		Invalid:   lipgloss.NewStyle().Foreground(invalid),
 		Playing:   lipgloss.NewStyle().Foreground(playing).Bold(true),
-		Selection: lipgloss.NewStyle().Reverse(true),
-		PaneFocus: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		Selection: selection,
+		PaneFocus: lipgloss.NewStyle().Foreground(focus).Bold(true),
 		Title:     lipgloss.NewStyle().Foreground(title).Bold(true),
-		Error:     lipgloss.NewStyle().Foreground(invalid).Bold(true),
+		TabName:   lipgloss.NewStyle().Foreground(tabName).Bold(true),
+		Error:     lipgloss.NewStyle().Foreground(errColor).Bold(true),
 		Progress:  lipgloss.NewStyle().Foreground(progress),
 		Header:    header,
-		Status:    lipgloss.NewStyle().Faint(true),
+		Status:    status,
 		Hints:     hints,
 	}
 }

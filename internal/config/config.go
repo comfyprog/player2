@@ -37,16 +37,26 @@ type Config struct {
 // Colors holds the configurable UI colors. Values are ANSI 256-color indexes.
 // Empty values keep each role's default.
 type Colors struct {
-	Background string `toml:"background"`
-	Header     string `toml:"header"`
-	PaneTitle  string `toml:"pane_title"`
-	Hints      string `toml:"hints"`
-	Progress   string `toml:"progress"`
-	Accent     string `toml:"accent"`
-	Dir        string `toml:"dir"`
-	Cue        string `toml:"cue"`
-	Playing    string `toml:"playing"`
-	Error      string `toml:"error"`
+	Background          string `toml:"background"`
+	Foreground          string `toml:"foreground"`
+	Header              string `toml:"header"`
+	PaneTitle           string `toml:"pane_title"`
+	Hints               string `toml:"hints"`
+	Status              string `toml:"status"`
+	Progress            string `toml:"progress"`
+	SelectionForeground string `toml:"selection_fg"`
+	SelectionBackground string `toml:"selection_bg"`
+	Dim                 string `toml:"dim"`
+	Focus               string `toml:"focus"`
+	TabName             string `toml:"tab_name"`
+	Accent              string `toml:"accent"`
+	Dir                 string `toml:"dir"`
+	Audio               string `toml:"audio"`
+	Cue                 string `toml:"cue"`
+	Playlist            string `toml:"playlist"`
+	Playing             string `toml:"playing"`
+	Invalid             string `toml:"invalid"`
+	Error               string `toml:"error"`
 }
 
 // keyActions is the closed vocabulary of action names accepted in [keys].

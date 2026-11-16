@@ -384,15 +384,57 @@ progress = "204"
 	}
 }
 
+func TestLoadSelectionStatusTabColors(t *testing.T) {
+	setHome(t)
+	path := writeConfig(t, t.TempDir(), `[colors]
+selection_bg = "235"
+status = "250"
+tab_name = "214"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := cfg.Colors
+	if got.SelectionBackground != "235" || got.Status != "250" || got.TabName != "214" {
+		t.Errorf("row colors = %+v, want selection_bg 235, status 250, tab_name 214", got)
+	}
+}
+
+func TestLoadRemainingColors(t *testing.T) {
+	setHome(t)
+	path := writeConfig(t, t.TempDir(), `[colors]
+foreground = "250"
+dim = "240"
+audio = "111"
+playlist = "112"
+invalid = "113"
+focus = "114"
+selection_fg = "115"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := cfg.Colors
+	if got.Foreground != "250" || got.Dim != "240" || got.Audio != "111" ||
+		got.Playlist != "112" || got.Invalid != "113" || got.Focus != "114" ||
+		got.SelectionForeground != "115" {
+		t.Errorf("remaining colors = %+v", got)
+	}
+}
+
 func TestLoadUnknownColorKey(t *testing.T) {
 	setHome(t)
-	path := writeConfig(t, t.TempDir(), "[colors]\nforeground = \"1\"\n")
+	path := writeConfig(t, t.TempDir(), "[colors]\nbezel = \"1\"\n")
 
 	_, err := Load(path)
 	if err == nil {
 		t.Fatal("expected error for unknown color key")
 	}
-	if !strings.Contains(err.Error(), "foreground") {
+	if !strings.Contains(err.Error(), "bezel") {
 		t.Errorf("error does not name unknown color key: %v", err)
 	}
 }

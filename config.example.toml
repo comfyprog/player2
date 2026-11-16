@@ -46,16 +46,26 @@ extra_audio_extensions = []
 
 # UI colors as ANSI 256-color indexes.
 [colors]
-background = "" # full-screen background; empty keeps the terminal's own
-header = ""     # top header row; empty keeps the terminal's default
-pane_title = "" # focused pane title; empty uses accent
-hints = ""      # key-hint row; empty keeps the terminal's default
-progress = ""   # progress bar; empty uses accent
-accent = "39"   # focused borders, selected rows, status accents
-dir = "33"      # directories in the browser
-cue = "141"     # CUE sheets and CUE tracks
-playing = "46"  # the currently playing queue item
-error = "196"   # errors and invalid entries
+background = ""   # full-screen background; empty keeps the terminal's own
+foreground = ""   # normal rows and inactive tabs; empty keeps the terminal's
+header = ""       # top header row; empty keeps the terminal's default
+pane_title = ""   # focused pane title; empty uses accent
+hints = ""        # key-hint row; empty keeps the terminal's default
+status = ""       # status message; empty keeps the terminal's default
+progress = ""     # progress bar; empty uses accent
+selection_fg = "" # selected row text; empty keeps the terminal's default
+selection_bg = "" # selected row background; empty uses reverse video
+dim = ""          # secondary text and dividers; empty keeps the terminal's
+focus = ""        # focus accents and overlays; empty uses accent
+tab_name = ""     # playlist tab name; empty uses accent
+accent = "39"     # generic accent and fallback for title/progress/tab name
+dir = "33"        # directories in the browser
+audio = ""        # audio rows; empty uses built-in 250
+cue = "141"       # CUE sheets and CUE tracks
+playlist = ""     # playlist rows; empty uses built-in 81
+playing = "46"    # the currently playing queue item
+invalid = ""      # invalid CUE entries; empty falls back to error
+error = "196"     # errors
 
 # Key bindings. Each value is an array of Bubble Tea key names and replaces
 # that action's default binding. Omit an action to keep its default.

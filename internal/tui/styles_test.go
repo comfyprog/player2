@@ -148,6 +148,158 @@ func TestNewStylesInvalidElementColorsFallBack(t *testing.T) {
 	}
 }
 
+func TestNewStylesUsesConfiguredSelectionBackground(t *testing.T) {
+	styles := NewStyles(config.Colors{SelectionBackground: "235"})
+
+	if got := styles.Selection.Render("x"); !strings.Contains(got, "48;5;235") {
+		t.Errorf("selection render = %q, want ANSI 256 background 235", got)
+	}
+	if styles.Selection.GetReverse() {
+		t.Error("configured selection still uses reverse video")
+	}
+}
+
+func TestNewStylesUsesConfiguredStatusAndTabNameColors(t *testing.T) {
+	styles := NewStyles(config.Colors{Status: "250", TabName: "214"})
+
+	if got := styles.Status.Render("x"); !strings.Contains(got, "38;5;250") {
+		t.Errorf("status render = %q, want ANSI 256 color 250", got)
+	}
+	if !styles.Status.GetFaint() {
+		t.Error("status style is not faint")
+	}
+	if got := styles.TabName.Render("x"); !strings.Contains(got, "38;5;214") {
+		t.Errorf("tab name render = %q, want ANSI 256 color 214", got)
+	}
+	if !styles.TabName.GetBold() {
+		t.Error("tab name style is not bold")
+	}
+}
+
+func TestNewStylesRowColorsFallBack(t *testing.T) {
+	styles := NewStyles(config.Colors{})
+
+	if !styles.Selection.GetReverse() {
+		t.Error("default selection does not use reverse video")
+	}
+	if got := styles.Status.Render("x"); strings.Contains(got, "38;5;") {
+		t.Errorf("default status render = %q, want no foreground color", got)
+	}
+	if got := styles.TabName.Render("x"); !strings.Contains(got, "38;5;39") {
+		t.Errorf("default tab name = %q, want accent 39", got)
+	}
+}
+
+func TestNewStylesInvalidRowColorsFallBack(t *testing.T) {
+	styles := NewStyles(config.Colors{
+		SelectionBackground: "not-a-color",
+		Status:              "not-a-color",
+		TabName:             "not-a-color",
+	})
+
+	if !styles.Selection.GetReverse() {
+		t.Error("invalid selection background did not fall back to reverse video")
+	}
+	if got := styles.Status.Render("x"); strings.Contains(got, "38;5;") {
+		t.Errorf("invalid status render = %q, want no foreground color", got)
+	}
+	if got := styles.TabName.Render("x"); !strings.Contains(got, "38;5;39") {
+		t.Errorf("invalid tab name = %q, want accent 39", got)
+	}
+}
+
+func TestNewStylesUsesConfiguredRemainingColors(t *testing.T) {
+	styles := NewStyles(config.Colors{
+		Foreground:          "250",
+		Dim:                 "240",
+		Audio:               "111",
+		Playlist:            "112",
+		Invalid:             "113",
+		Focus:               "114",
+		SelectionForeground: "115",
+		SelectionBackground: "235",
+	})
+
+	cases := []struct {
+		name  string
+		style lipgloss.Style
+		want  string
+	}{
+		{"foreground", styles.Fg, "38;5;250"},
+		{"base", styles.Base, "38;5;250"},
+		{"dim", styles.Dim, "38;5;240"},
+		{"audio", styles.Audio, "38;5;111"},
+		{"playlist", styles.Playlist, "38;5;112"},
+		{"invalid", styles.Invalid, "38;5;113"},
+		{"focus", styles.PaneFocus, "38;5;114"},
+	}
+	for _, tc := range cases {
+		if got := tc.style.Render("x"); !strings.Contains(got, tc.want) {
+			t.Errorf("%s render = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	if !styles.Dim.GetFaint() {
+		t.Error("dim style is not faint")
+	}
+	if !styles.PaneFocus.GetBold() {
+		t.Error("focus style is not bold")
+	}
+
+	selection := styles.Selection.Render("x")
+	if !strings.Contains(selection, "38;5;115") || !strings.Contains(selection, "48;5;235") {
+		t.Errorf("selection render = %q, want foreground 115 and background 235", selection)
+	}
+	if styles.Selection.GetReverse() {
+		t.Error("configured selection still uses reverse video")
+	}
+}
+
+func TestNewStylesRemainingColorsFallBack(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		colors config.Colors
+	}{
+		{"empty", config.Colors{}},
+		{"invalid", config.Colors{
+			Foreground:          "not-a-color",
+			Dim:                 "not-a-color",
+			Audio:               "not-a-color",
+			Playlist:            "not-a-color",
+			Invalid:             "not-a-color",
+			Focus:               "not-a-color",
+			SelectionForeground: "not-a-color",
+			SelectionBackground: "not-a-color",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			styles := NewStyles(tc.colors)
+
+			if got := styles.Fg.Render("x"); got != "x" {
+				t.Errorf("foreground render = %q, want plain x", got)
+			}
+			if got := styles.Dim.Render("x"); strings.Contains(got, "38;5;") {
+				t.Errorf("dim render = %q, want no foreground color", got)
+			}
+			if got := styles.Audio.Render("x"); !strings.Contains(got, "38;5;250") {
+				t.Errorf("audio render = %q, want built-in 250", got)
+			}
+			if got := styles.Playlist.Render("x"); !strings.Contains(got, "38;5;81") {
+				t.Errorf("playlist render = %q, want built-in 81", got)
+			}
+			if got := styles.Invalid.Render("x"); !strings.Contains(got, "38;5;196") {
+				t.Errorf("invalid render = %q, want error 196", got)
+			}
+			if got := styles.PaneFocus.Render("x"); !strings.Contains(got, "38;5;39") {
+				t.Errorf("focus render = %q, want accent 39", got)
+			}
+			if !styles.Selection.GetReverse() {
+				t.Error("selection does not use reverse video")
+			}
+		})
+	}
+}
+
 func TestNewStylesInvalidBackgroundKeepsTerminalDefault(t *testing.T) {
 	styles := NewStyles(config.Colors{Background: "not-a-color"})
 

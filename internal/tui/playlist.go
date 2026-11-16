@@ -252,7 +252,7 @@ func (m *Model) playlistLines(width, height int) []string {
 	nameRows := 0
 	if name := m.tabName(m.activeTab); name != "" && height > 1 {
 		nameRows = 1
-		lines[1] = m.styles.PaneFocus.Render(fitPlain(name, width))
+		lines[1] = m.styles.TabName.Render(fitPlain(name, width))
 	}
 
 	body := height - 1 - nameRows

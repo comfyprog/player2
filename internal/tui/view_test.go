@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"player2/internal/config"
+	"player2/internal/library"
 	"player2/internal/player"
 	"player2/internal/queue"
 )
@@ -576,6 +577,103 @@ func TestViewElementColorsFromConfig(t *testing.T) {
 		if line := findLine(tc.needle); !strings.Contains(line, tc.code) {
 			t.Errorf("%q line lacks color %s: %q", tc.needle, tc.code, line)
 		}
+	}
+}
+
+func TestViewRowStatusTabColorsFromConfig(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.Colors.SelectionBackground = "235"
+		opts.Config.Colors.Status = "250"
+		opts.Config.Colors.TabName = "214"
+	})
+	m.queue.Append(queue.Item{Title: "Song", Duration: time.Minute})
+	m.tabs[m.activeTab].name = "Mix"
+	m.focus = PanePlaylist
+	m = resize(t, m, 100, 30)
+
+	lines := strings.Split(m.View().Content, "\n")
+	findLine := func(needle string) string {
+		t.Helper()
+		for _, line := range lines {
+			if strings.Contains(ansi.Strip(line), needle) {
+				return line
+			}
+		}
+		t.Fatalf("no view line contains %q", needle)
+		return ""
+	}
+
+	cases := []struct {
+		needle string
+		code   string
+	}{
+		{"Song", "48;5;235"},
+		{"Status:", "38;5;250"},
+		{"Mix", "38;5;214"},
+	}
+	for _, tc := range cases {
+		if line := findLine(tc.needle); !strings.Contains(line, tc.code) {
+			t.Errorf("%q line lacks color %s: %q", tc.needle, tc.code, line)
+		}
+	}
+}
+
+func TestViewRemainingColorsFromConfig(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.Colors.Foreground = "250"
+		opts.Config.Colors.Dim = "240"
+		opts.Config.Colors.Audio = "111"
+		opts.Config.Colors.Playlist = "112"
+		opts.Config.Colors.Invalid = "113"
+		opts.Config.Colors.Focus = "114"
+		opts.Config.Colors.SelectionForeground = "115"
+		opts.Config.Colors.SelectionBackground = "235"
+	})
+	m.browserEntriesPath = "/music"
+	m.browserEntries = []library.Entry{
+		{Kind: library.KindDir, Name: "Album", Path: "/music/Album"},
+		{Kind: library.KindAudio, Name: "song.flac", Path: "/music/song.flac"},
+		{Kind: library.KindPlaylist, Name: "mix.m3u", Path: "/music/mix.m3u"},
+		{Kind: library.KindInvalidCue, Name: "bad.cue", Path: "/music/bad.cue"},
+	}
+	m.queue.Append(queue.Item{Title: "Current", Duration: time.Minute})
+	m.queue.Append(queue.Item{Title: "Plain", Duration: time.Minute})
+	m = resize(t, m, 100, 30)
+
+	lines := strings.Split(m.View().Content, "\n")
+	findLine := func(needle string) string {
+		t.Helper()
+		for _, line := range lines {
+			if strings.Contains(ansi.Strip(line), needle) {
+				return line
+			}
+		}
+		t.Fatalf("no view line contains %q", needle)
+		return ""
+	}
+
+	cases := []struct {
+		needle string
+		codes  []string
+	}{
+		{"Album", []string{"38;5;115", "48;5;235"}},
+		{"song.flac", []string{"38;5;111"}},
+		{"mix.m3u", []string{"38;5;112"}},
+		{"bad.cue", []string{"38;5;113"}},
+		{"Plain", []string{"38;5;250"}},
+		{"[0]", []string{"38;5;114"}},
+	}
+	for _, tc := range cases {
+		line := findLine(tc.needle)
+		for _, code := range tc.codes {
+			if !strings.Contains(line, code) {
+				t.Errorf("%q line lacks color %s: %q", tc.needle, code, line)
+			}
+		}
+	}
+
+	if divider := findLine("│"); !strings.Contains(divider, "38;5;240") {
+		t.Errorf("divider line lacks dim color 240: %q", divider)
 	}
 }
 

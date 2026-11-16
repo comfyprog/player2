@@ -245,14 +245,24 @@ extra_audio_extensions = []
 
 [colors]
 background = ""
+foreground = ""
 header = ""
 pane_title = ""
 hints = ""
+status = ""
 progress = ""
+selection_fg = ""
+selection_bg = ""
+dim = ""
+focus = ""
+tab_name = ""
 accent = "39"
 dir = "33"
+audio = ""
 cue = "141"
+playlist = ""
 playing = "46"
+invalid = ""
 error = "196"
 
 [keys]
@@ -279,6 +289,19 @@ Notes:
   pane title, key-hint row, and progress bar. Empty keeps the existing look:
   the terminal default for `header` and `hints`, and `accent` for `pane_title`
   and `progress`.
+- `selection_bg`/`selection_fg` set the background and text of selected browser
+  and queue rows. Setting either replaces reverse-video selection; unset parts
+  use the terminal default.
+- `status` colors the status message, while errors still use `error`. `tab_name`
+  colors a playlist tab's name row; empty uses `accent`.
+- `foreground` colors normal file/queue rows and inactive tab labels; `dim`
+  colors secondary text such as unfocused titles, dividers, empty-state
+  messages, and progress times. Empty keeps the terminal default.
+- `audio` and `playlist` color audio and playlist rows; empty keeps the built-in
+  colors `250` and `81`. `invalid` colors invalid CUE entries and falls back to
+  `error`.
+- `focus` colors the active tab label when the queue pane is not focused, plus
+  prompt and track-info overlay titles; empty falls back to `accent`.
 - `restore_queue` restores all ten playlist tabs, their names, and the last
   visible tab. With it disabled, every tab starts empty and unnamed, and the next
   save replaces the state file.
