@@ -461,9 +461,11 @@ the player stream generation so events from a replaced stream are ignored.
 Minimum terminal size is 60×10; below it the view renders a clear “terminal too
 small” message. Rendering builds plain, width-checked rows with
 `ansi.StringWidth`/`ansi.Truncate`, then applies styles, so Unicode and hostile
-filenames cannot overflow or inject control sequences. The five configurable
-colors (`accent`, `dir`, `cue`, `playing`, `error`) feed `Styles`; other roles use
-built-in defaults.
+filenames cannot overflow or inject control sequences. The six configurable
+colors (`background`, `accent`, `dir`, `cue`, `playing`, `error`) feed `Styles`;
+`background` is applied to the terminal through `View.BackgroundColor` so it
+covers the whole screen, including areas after nested style resets. Other roles
+use built-in defaults.
 
 ### Browser
 

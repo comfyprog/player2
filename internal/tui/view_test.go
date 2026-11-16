@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -517,6 +518,27 @@ func TestViewStartupError(t *testing.T) {
 	plain := ansi.Strip(m.View().Content)
 	if !strings.Contains(plain, "duplicate") || !strings.Contains(plain, "q") {
 		t.Errorf("startup error view = %q, want duplicate-key error", plain)
+	}
+}
+
+func TestViewSetsConfiguredBackground(t *testing.T) {
+	m := newTestModel(t, func(opts *Options) {
+		opts.Config.Colors.Background = "234"
+	})
+
+	got := m.View().BackgroundColor
+	if got == nil {
+		t.Fatal("View().BackgroundColor = nil, want configured background")
+	}
+	if want := lipgloss.Color("234"); got != want {
+		t.Errorf("View().BackgroundColor = %v, want %v", got, want)
+	}
+}
+
+func TestViewDefaultBackgroundIsTerminalDefault(t *testing.T) {
+	m := newTestModel(t, nil)
+	if got := m.View().BackgroundColor; got != nil {
+		t.Errorf("View().BackgroundColor = %v, want nil", got)
 	}
 }
 

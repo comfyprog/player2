@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
+
 	"player2/internal/config"
 
 	"github.com/charmbracelet/x/ansi"
@@ -51,6 +53,31 @@ func TestNewStylesUsesConfiguredColors(t *testing.T) {
 	}
 	if got := styles.Fg.Render("x"); got != "x" {
 		t.Errorf("default Fg render = %q, want plain x", got)
+	}
+	if got := styles.ScreenBackground(); got != nil {
+		t.Errorf("default ScreenBackground() = %v, want nil", got)
+	}
+}
+
+func TestNewStylesUsesConfiguredBackground(t *testing.T) {
+	styles := NewStyles(config.Colors{Background: "234"})
+
+	if got := styles.Bg.Render("x"); !strings.Contains(got, "48;5;234") {
+		t.Errorf("Bg render = %q, want ANSI 256 background 234", got)
+	}
+	if got, want := styles.ScreenBackground(), lipgloss.Color("234"); got != want {
+		t.Errorf("ScreenBackground() = %v, want %v", got, want)
+	}
+}
+
+func TestNewStylesInvalidBackgroundKeepsTerminalDefault(t *testing.T) {
+	styles := NewStyles(config.Colors{Background: "not-a-color"})
+
+	if got := styles.ScreenBackground(); got != nil {
+		t.Errorf("ScreenBackground() = %v, want nil for an invalid color", got)
+	}
+	if got := styles.Bg.Render("x"); got != "x" {
+		t.Errorf("Bg render = %q, want plain x for an invalid color", got)
 	}
 }
 

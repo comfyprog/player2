@@ -23,8 +23,9 @@ const (
 	defaultPlaylist = "81"
 )
 
-// Styles holds every visual role used by the TUI. Only the five config colors
-// are user-configurable; the remaining roles use built-in defaults.
+// Styles holds every visual role used by the TUI. Colors in the config's
+// [colors] table are user-configurable; the remaining roles use built-in
+// defaults.
 type Styles struct {
 	Bg        lipgloss.Style
 	Fg        lipgloss.Style
@@ -54,10 +55,13 @@ func NewStyles(colors config.Colors) Styles {
 	playing := colorValue(colors.Playing, defaultPlaying)
 	invalid := colorValue(colors.Error, defaultError)
 
-	// The terminal's own background and foreground are the defaults; these
-	// roles exist so panes can opt into explicit styling later without
-	// inventing colors outside the config surface.
-	bg := lipgloss.NewStyle().Background(lipgloss.NoColor{})
+	// The terminal's own foreground is the default. Bg carries the optional
+	// full-screen background; View applies it to the terminal so it covers
+	// every cell, including areas after a nested style resets.
+	bg := lipgloss.NewStyle()
+	if c := backgroundValue(colors.Background); c != nil {
+		bg = bg.Background(c)
+	}
 	fg := lipgloss.NewStyle().Foreground(lipgloss.NoColor{})
 
 	return Styles{
@@ -81,6 +85,16 @@ func NewStyles(colors config.Colors) Styles {
 	}
 }
 
+// ScreenBackground returns the configured full-screen background, or nil when
+// the terminal's own background should show through.
+func (s Styles) ScreenBackground() color.Color {
+	c := s.Bg.GetBackground()
+	if _, ok := c.(lipgloss.NoColor); ok {
+		return nil
+	}
+	return c
+}
+
 // PaneTitle returns the style for a pane title.
 func (s Styles) PaneTitle(focused bool) lipgloss.Style {
 	if focused {
@@ -95,6 +109,20 @@ func (s Styles) Row(selected bool) lipgloss.Style {
 		return s.Selection
 	}
 	return s.Fg
+}
+
+// backgroundValue parses the configured screen background. Empty or invalid
+// values return nil so the terminal's own background shows through.
+func backgroundValue(value string) color.Color {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	c := lipgloss.Color(value)
+	if _, ok := c.(lipgloss.NoColor); ok {
+		return nil
+	}
+	return c
 }
 
 // colorValue falls back to fallback when value is empty or whitespace.

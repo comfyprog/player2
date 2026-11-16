@@ -352,15 +352,28 @@ func TestLoadUnknownTopLevelKey(t *testing.T) {
 	}
 }
 
+func TestLoadBackgroundColor(t *testing.T) {
+	setHome(t)
+	path := writeConfig(t, t.TempDir(), "[colors]\nbackground = \"234\"\n")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Colors.Background != "234" {
+		t.Errorf("Background = %q, want 234", cfg.Colors.Background)
+	}
+}
+
 func TestLoadUnknownColorKey(t *testing.T) {
 	setHome(t)
-	path := writeConfig(t, t.TempDir(), "[colors]\nbackground = \"1\"\n")
+	path := writeConfig(t, t.TempDir(), "[colors]\nforeground = \"1\"\n")
 
 	_, err := Load(path)
 	if err == nil {
 		t.Fatal("expected error for unknown color key")
 	}
-	if !strings.Contains(err.Error(), "background") {
+	if !strings.Contains(err.Error(), "foreground") {
 		t.Errorf("error does not name unknown color key: %v", err)
 	}
 }

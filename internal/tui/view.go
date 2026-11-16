@@ -28,6 +28,7 @@ func (m *Model) View() tea.View {
 	view := tea.NewView(m.render())
 	view.AltScreen = true
 	view.WindowTitle = "player2"
+	view.BackgroundColor = m.styles.ScreenBackground()
 	return view
 }
 

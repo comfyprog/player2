@@ -46,6 +46,7 @@ extra_audio_extensions = []
 
 # UI colors as ANSI 256-color indexes.
 [colors]
+background = "" # full-screen background; empty keeps the terminal's own
 accent = "39"   # focused borders, selected rows, status accents
 dir = "33"      # directories in the browser
 cue = "141"     # CUE sheets and CUE tracks

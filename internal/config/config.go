@@ -35,12 +35,14 @@ type Config struct {
 }
 
 // Colors holds the configurable UI colors. Values are ANSI 256-color indexes.
+// An empty Background keeps the terminal's own background.
 type Colors struct {
-	Accent  string `toml:"accent"`
-	Dir     string `toml:"dir"`
-	Cue     string `toml:"cue"`
-	Playing string `toml:"playing"`
-	Error   string `toml:"error"`
+	Background string `toml:"background"`
+	Accent     string `toml:"accent"`
+	Dir        string `toml:"dir"`
+	Cue        string `toml:"cue"`
+	Playing    string `toml:"playing"`
+	Error      string `toml:"error"`
 }
 
 // keyActions is the closed vocabulary of action names accepted in [keys].

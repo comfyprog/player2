@@ -244,6 +244,7 @@ cue_fallback_encoding = "windows-1252"
 extra_audio_extensions = []
 
 [colors]
+background = ""
 accent = "39"
 dir = "33"
 cue = "141"
@@ -268,7 +269,8 @@ Notes:
   encodings are accepted.
 - `extra_audio_extensions` adds extensions (for example `[".m4b"]`) that the
   scanner should treat as audio. Files are still decoded by FFmpeg.
-- `[colors]` values are ANSI 256-color indexes.
+- `[colors]` values are ANSI 256-color indexes. `background` fills the entire
+  screen; when empty or omitted, the terminal's own background is kept.
 - `restore_queue` restores all ten playlist tabs, their names, and the last
   visible tab. With it disabled, every tab starts empty and unnamed, and the next
   save replaces the state file.
