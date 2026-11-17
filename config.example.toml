@@ -86,7 +86,7 @@ tab_7 = ["alt+7"]               # show playlist tab 7
 tab_8 = ["alt+8"]               # show playlist tab 8
 tab_9 = ["alt+9"]               # show playlist tab 9
 toggle_zoom = ["z"]             # show only the focused pane
-search = ["/"]                  # filter the browser by substring
+search = ["/"]                  # filter the focused pane by substring
 
 # Browsing
 open = ["enter"]                # enter a directory/CUE folder or play selection

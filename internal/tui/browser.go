@@ -807,9 +807,10 @@ func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
 		return nil
 	}
 
-	// A replacement queue starts with fresh item IDs.
+	// A replacement queue starts with fresh item IDs and an unfiltered view.
 	m.clearPreview()
 	m.clearTabProbes(m.activeTab)
+	m.clearPlaylistFilter()
 	m.queue.Replace(msg.items...)
 	selected := msg.selected
 	if selected < 0 || selected >= len(msg.items) {

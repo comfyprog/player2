@@ -104,7 +104,7 @@ All keys are configurable; these are the defaults.
 | Mute | `m` | Toggle mute |
 | Shuffle | `s` | Toggle shuffle for the active tab |
 | Repeat | `r` | Cycle repeat for the active tab |
-| Search | `/` | Filter the browser by substring |
+| Search | `/` | Filter the focused pane by substring |
 | Bookmark directory | `f` | Add the current directory to bookmarks |
 | Show bookmarks | `F` | Show the bookmark list in the browser |
 | Toggle tags | `t` | Switch the browser between filenames and tags |
@@ -196,9 +196,16 @@ tab that owns the current sound is marked with `▶`.
 
 - `Alt+0`…`Alt+9` switch the visible tab. There are no modifier-free tab
   shortcuts by default; bind `tab_0`…`tab_9` in `[keys]` to change them.
-- Every tab has its own queue, current item, selection, shuffle, and repeat.
-  Browser add/open, remove, move, clear, save, and go-to-playing act on the
-  visible tab.
+- Every tab has its own queue, current item, selection, filter, shuffle, and
+  repeat. Browser add/open, remove, move, clear, save, and go-to-playing act on
+  the visible tab.
+- `/` filters the visible tab with an incremental, case-insensitive substring
+  match on the displayed title and artist. The tab strip shows `/query` while
+  editing and `[query]` once accepted. Enter keeps the filter and Esc clears it;
+  Up/Down, paging, Home/End, Enter, `d`, and `J`/`K` act on matching rows, with
+  `J`/`K` stepping past the adjacent matching row. Playback, next/previous, and
+  automatic advance always use the full queue, and filters are remembered per
+  tab but never saved. `g` clears a filter when it hides the current item.
 - Switching tabs does not interrupt playback. While audio is playing or paused,
   next/previous and automatic advance follow the tab that started the stream.
   The header keeps showing that item and adds `[tab N]` when another tab is

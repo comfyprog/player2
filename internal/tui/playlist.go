@@ -184,14 +184,14 @@ func (m *Model) clampTabSelection(tab int) {
 		return
 	}
 	selected, offset := m.tabSelection(tab)
-	selected, offset = playlistBoundsFor(selected, offset, m.tabs[tab].queue.Len(), m.playlistBodyRowsFor(tab))
+	selected, offset = playlistBoundsFor(selected, offset, len(m.playlistVisibleItemsFor(tab)), m.playlistBodyRowsFor(tab))
 	m.setTabSelection(tab, selected, offset)
 }
 
 // clampPlaylist keeps the selection and offset valid for the current queue and
 // terminal size.
 func (m *Model) clampPlaylist() {
-	selected, offset := m.playlistBounds(len(m.queue.Snapshot().Items), m.playlistBodyRows())
+	selected, offset := m.playlistBounds(len(m.playlistVisibleItems()), m.playlistBodyRows())
 	m.playlistSelected = selected
 	m.playlistOffset = offset
 }
@@ -205,10 +205,14 @@ func (m *Model) switchTab(index int) tea.Cmd {
 
 	m.tabs[m.activeTab].selected = m.playlistSelected
 	m.tabs[m.activeTab].offset = m.playlistOffset
+	m.tabs[m.activeTab].filter = m.playlistFilter
 	m.activeTab = index
 	m.queue = m.tabs[index].queue
 	m.playlistSelected = m.tabs[index].selected
 	m.playlistOffset = m.tabs[index].offset
+	m.playlistFilter = m.tabs[index].filter
+	m.playlistSearch = m.playlistFilter
+	m.playlistSearching = false
 	m.clampPlaylist()
 
 	if count := m.queue.Len(); count == 0 {
@@ -242,7 +246,7 @@ func (m *Model) playlistLines(width, height int) []string {
 		return lines
 	}
 
-	lines[0] = m.tabStrip(width)
+	lines[0] = m.playlistTitle(width)
 
 	blank := strings.Repeat(" ", max(width, 0))
 	for i := 1; i < height; i++ {
@@ -267,16 +271,22 @@ func (m *Model) playlistLines(width, height int) []string {
 		return lines
 	}
 
-	selected, offset := m.playlistBounds(len(items), body)
+	visible := m.playlistVisibleItems()
+	if len(visible) == 0 {
+		lines[1+nameRows] = m.styles.Dim.Render(fitPlain("No matches", width))
+		return lines
+	}
+
+	selected, offset := m.playlistBounds(len(visible), body)
 	m.playlistSelected = selected
 	m.playlistOffset = offset
 
 	for row := 0; row < body; row++ {
 		index := offset + row
-		if index >= len(items) {
+		if index >= len(visible) {
 			break
 		}
-		item := items[index]
+		item := visible[index].Item
 		current := m.nowPlaying(item.ID)
 		plain := playlistRow(item, current, width)
 		style := m.styles.Fg
@@ -289,6 +299,85 @@ func (m *Model) playlistLines(width, height int) []string {
 		lines[row+1+nameRows] = style.Render(plain)
 	}
 	return lines
+}
+
+// playlistVisibleItem pairs a queue item with its unfiltered queue index so
+// actions can map filtered rows back to the queue.
+type playlistVisibleItem struct {
+	Item  queue.Item
+	Index int
+}
+
+// playlistVisibleItems applies the case-insensitive substring filter to the
+// active queue without disturbing queue order.
+func (m *Model) playlistVisibleItems() []playlistVisibleItem {
+	return m.playlistVisibleItemsFor(m.activeTab)
+}
+
+// playlistVisibleItemsFor applies a tab's view filter to its queue.
+func (m *Model) playlistVisibleItemsFor(tab int) []playlistVisibleItem {
+	if tab < 0 || tab >= tabCount {
+		return nil
+	}
+	items := m.tabs[tab].queue.Snapshot().Items
+	filter := m.tabs[tab].filter
+	if tab == m.activeTab {
+		filter = m.playlistFilter
+	}
+	if filter == "" {
+		visible := make([]playlistVisibleItem, len(items))
+		for index, item := range items {
+			visible[index] = playlistVisibleItem{Item: item, Index: index}
+		}
+		return visible
+	}
+	needle := strings.ToLower(filter)
+	visible := make([]playlistVisibleItem, 0, len(items))
+	for index, item := range items {
+		if strings.Contains(strings.ToLower(displayTitle(item)), needle) {
+			visible = append(visible, playlistVisibleItem{Item: item, Index: index})
+		}
+	}
+	return visible
+}
+
+// playlistVisibleIndexForID returns id's row in tab's filtered view, or -1.
+func (m *Model) playlistVisibleIndexForID(tab int, id uint64) int {
+	for index, visible := range m.playlistVisibleItemsFor(tab) {
+		if visible.Item.ID == id {
+			return index
+		}
+	}
+	return -1
+}
+
+// clearPlaylistFilter removes the active filter and search input.
+func (m *Model) clearPlaylistFilter() {
+	m.playlistFilter = ""
+	m.playlistSearch = ""
+	m.playlistSearching = false
+	if m.activeTab >= 0 && m.activeTab < tabCount {
+		m.tabs[m.activeTab].filter = ""
+	}
+}
+
+// playlistTitle renders the tab strip with the active filter on the right.
+func (m *Model) playlistTitle(width int) string {
+	suffix := ""
+	switch {
+	case m.playlistSearching:
+		suffix = "  /" + m.playlistSearch
+	case m.playlistFilter != "":
+		suffix = "  [" + m.playlistFilter + "]"
+	}
+	if suffix == "" {
+		return m.tabStrip(width)
+	}
+	suffixWidth := ansi.StringWidth(suffix)
+	if suffixWidth >= width {
+		return truncatePlain(suffix, width)
+	}
+	return m.tabStrip(width-suffixWidth) + suffix
 }
 
 // tabStrip renders the ten fixed playlist tabs. The active tab is bracketed,
@@ -406,36 +495,18 @@ func (m *Model) selectedPlaylistItem() (queue.Item, bool) {
 
 // selectedPlaylistItemFor returns the item under tab's selection.
 func (m *Model) selectedPlaylistItemFor(tab int) (queue.Item, bool) {
-	if tab < 0 || tab >= tabCount {
-		return queue.Item{}, false
-	}
-	items := m.tabs[tab].queue.Snapshot().Items
-	if len(items) == 0 {
+	visible := m.playlistVisibleItemsFor(tab)
+	if len(visible) == 0 {
 		return queue.Item{}, false
 	}
 	index, _ := m.tabSelection(tab)
 	if index < 0 {
 		index = 0
 	}
-	if index >= len(items) {
-		index = len(items) - 1
+	if index >= len(visible) {
+		index = len(visible) - 1
 	}
-	return items[index], true
-}
-
-// queueIndexOf returns the index of id in q, or -1.
-func queueIndexOf(q *queue.Queue, id uint64) int {
-	for index, item := range q.Snapshot().Items {
-		if item.ID == id {
-			return index
-		}
-	}
-	return -1
-}
-
-// queueIndex returns the index of id in the active queue, or -1.
-func (m *Model) queueIndex(id uint64) int {
-	return queueIndexOf(m.queue, id)
+	return visible[index].Item, true
 }
 
 // selectCurrent moves the playlist selection to the current item.
@@ -446,7 +517,14 @@ func (m *Model) selectCurrent() {
 		m.playlistOffset = 0
 		return
 	}
-	if index := m.queueIndex(current.ID); index >= 0 {
+	index := m.playlistVisibleIndexForID(m.activeTab, current.ID)
+	if index < 0 && m.playlistFilter != "" {
+		// The filter hides the sounding item; reveal it rather than selecting
+		// a different row.
+		m.clearPlaylistFilter()
+		index = m.playlistVisibleIndexForID(m.activeTab, current.ID)
+	}
+	if index >= 0 {
 		m.playlistSelected = index
 	}
 	m.clampPlaylist()
@@ -466,7 +544,7 @@ func (m *Model) followSelectionFor(tab int, previous, selected queue.Item, hadPr
 	if hadPrevious && hadSelected && previous.ID == selected.ID {
 		q := m.tabs[tab].queue
 		if current, ok := q.Current(); ok {
-			if index := queueIndexOf(q, current.ID); index >= 0 {
+			if index := m.playlistVisibleIndexForID(tab, current.ID); index >= 0 {
 				_, offset := m.tabSelection(tab)
 				m.setTabSelection(tab, index, offset)
 			}
@@ -477,7 +555,7 @@ func (m *Model) followSelectionFor(tab int, previous, selected queue.Item, hadPr
 
 // movePlaylistSelection moves the selection by delta and keeps it visible.
 func (m *Model) movePlaylistSelection(delta int) {
-	count := len(m.queue.Snapshot().Items)
+	count := len(m.playlistVisibleItems())
 	if count == 0 {
 		m.clampPlaylist()
 		return
@@ -486,7 +564,7 @@ func (m *Model) movePlaylistSelection(delta int) {
 	m.clampPlaylist()
 }
 
-// selectPlaylistFirst and selectPlaylistLast jump within the queue.
+// selectPlaylistFirst and selectPlaylistLast jump within the filtered view.
 func (m *Model) selectPlaylistFirst() {
 	m.playlistSelected = 0
 	m.playlistOffset = 0
@@ -494,7 +572,7 @@ func (m *Model) selectPlaylistFirst() {
 }
 
 func (m *Model) selectPlaylistLast() {
-	m.playlistSelected = max(len(m.queue.Snapshot().Items)-1, 0)
+	m.playlistSelected = max(len(m.playlistVisibleItems())-1, 0)
 	m.playlistOffset = m.playlistSelected
 	m.clampPlaylist()
 }
@@ -814,8 +892,74 @@ func (m *Model) handlePlaylistAction(action Action) tea.Cmd {
 		m.selectPlaylistFirst()
 	case ActionLast:
 		m.selectPlaylistLast()
+	case ActionSearch:
+		m.playlistSearching = true
+		m.playlistSearch = m.playlistFilter
 	}
 	return nil
+}
+
+// handlePlaylistSearchKey captures editing keys while the playlist filter is
+// active.
+func (m *Model) handlePlaylistSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	switch key {
+	case "esc", "escape":
+		m.clearPlaylistFilter()
+		m.playlistSelected = 0
+		m.playlistOffset = 0
+		m.clampPlaylist()
+		return m, nil
+	case "enter":
+		m.playlistSearching = false
+		m.playlistFilter = m.playlistSearch
+		m.clampPlaylist()
+		return m, nil
+	case "backspace":
+		if m.playlistSearch != "" {
+			runes := []rune(m.playlistSearch)
+			m.playlistSearch = string(runes[:len(runes)-1])
+		}
+		m.playlistFilter = m.playlistSearch
+		m.playlistSelected = 0
+		m.playlistOffset = 0
+		m.clampPlaylist()
+		return m, nil
+	}
+
+	switch key {
+	case "up":
+		m.movePlaylistSelection(-1)
+		return m, nil
+	case "down":
+		m.movePlaylistSelection(1)
+		return m, nil
+	case "pgup":
+		m.movePlaylistSelection(-m.playlistBodyRows())
+		return m, nil
+	case "pgdown":
+		m.movePlaylistSelection(m.playlistBodyRows())
+		return m, nil
+	case "home":
+		m.selectPlaylistFirst()
+		return m, nil
+	case "end":
+		m.selectPlaylistLast()
+		return m, nil
+	}
+
+	if text, ok := printableKeyText(msg); ok {
+		m.playlistSearch += text
+		m.playlistFilter = m.playlistSearch
+		m.playlistSelected = 0
+		m.playlistOffset = 0
+		m.clampPlaylist()
+	}
+	return m, nil
 }
 
 // gotoPlaying selects the sounding tab's current item, switching to that tab
@@ -834,7 +978,12 @@ func (m *Model) gotoPlaying() tea.Cmd {
 // playlistOpen makes the selected item current and plays it.
 func (m *Model) playlistOpen() tea.Cmd {
 	m.clampPlaylist()
-	if !m.queue.SetCurrent(m.playlistSelected) {
+	visible := m.playlistVisibleItems()
+	if m.playlistSelected < 0 || m.playlistSelected >= len(visible) {
+		m.setStatusOK("nothing to play")
+		return nil
+	}
+	if !m.queue.SetCurrent(visible[m.playlistSelected].Index) {
 		m.setStatusOK("nothing to play")
 		return nil
 	}
@@ -853,8 +1002,13 @@ func (m *Model) playlistOpen() tea.Cmd {
 // playback; the queue selects the next (or previous) item.
 func (m *Model) playlistRemove() tea.Cmd {
 	m.clampPlaylist()
+	visible := m.playlistVisibleItems()
+	if m.playlistSelected < 0 || m.playlistSelected >= len(visible) {
+		m.setStatusOK("nothing to remove")
+		return nil
+	}
 	previous, hadPrevious := m.queue.Current()
-	removed, ok := m.queue.Remove(m.playlistSelected)
+	removed, ok := m.queue.Remove(visible[m.playlistSelected].Index)
 	if !ok {
 		m.setStatusOK("nothing to remove")
 		return nil
@@ -876,12 +1030,22 @@ func (m *Model) playlistRemove() tea.Cmd {
 
 // playlistMove moves the selected item by direction (-1 up, +1 down).
 func (m *Model) playlistMove(direction int) tea.Cmd {
-	if !m.queue.Move(m.playlistSelected, direction) {
+	m.clampPlaylist()
+	visible := m.playlistVisibleItems()
+	target := m.playlistSelected + direction
+	if m.playlistSelected < 0 || m.playlistSelected >= len(visible) ||
+		target < 0 || target >= len(visible) {
+		m.clampPlaylist()
+		return nil
+	}
+	from := visible[m.playlistSelected].Index
+	to := visible[target].Index
+	if !m.queue.Move(from, to-from) {
 		m.clampPlaylist()
 		return nil
 	}
 	m.bumpQueueEpoch()
-	m.playlistSelected += direction
+	m.playlistSelected = target
 	m.clampPlaylist()
 	return m.saveQueue()
 }
@@ -899,6 +1063,7 @@ func (m *Model) playlistClear() tea.Cmd {
 	}
 	m.playlistSelected = 0
 	m.playlistOffset = 0
+	m.clearPlaylistFilter()
 	m.clearTabProbes(m.activeTab)
 	m.setStatusOK("queue cleared")
 	if stop == nil {
@@ -1256,7 +1421,11 @@ func (m *Model) applyQueueRestored(msg queueRestoredMsg) tea.Cmd {
 		m.tabs[i].name = names[i]
 		m.tabs[i].selected = queueCurrentIndex(restored[i])
 		m.tabs[i].offset = m.tabs[i].selected
+		m.tabs[i].filter = ""
 	}
+	m.playlistFilter = ""
+	m.playlistSearch = ""
+	m.playlistSearching = false
 	m.activeTab = msg.active
 	if m.activeTab < 0 || m.activeTab >= tabCount {
 		m.activeTab = 0

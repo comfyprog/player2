@@ -510,8 +510,17 @@ screen, including areas after nested style resets.
 
 - Playlist rendering shows the tab strip, an optional active-tab name row, then
   the visible tab's current marker, selection, title/artist, CUE track number,
-  right-aligned duration, and scroll offset. Each tab remembers its own selection
-  and scroll offset; body-row calculations account for the active tab's name.
+  right-aligned duration, and scroll offset. Each tab remembers its own selection,
+  scroll offset, and filter; body-row calculations account for the active tab's
+  name.
+- `/` filters the visible tab by a case-insensitive substring of the displayed
+  title/artist. Selection and scroll offsets index the filtered rows; open,
+  remove, and move map the selected row back to its queue index, and move steps
+  to the adjacent visible row. Filtering never changes playback, next/previous,
+  or automatic advance. Enter keeps the filter, Esc clears it, queue
+  replacement/clear and restore reset it, and `g` clears a filter hiding the
+  current item. The tab strip carries `/query` while editing and `[query]` when
+  accepted; a non-empty queue with no matches shows `No matches`.
 - `T` (`name_tab`) opens a prefilled text prompt for the visible tab. Enter saves
   a trimmed name, an empty input clears it, and Esc cancels. The prompt captures
   the tab index when opened. Names persist through the same coalesced queue save

@@ -298,6 +298,337 @@ func TestPlaylistEmptyState(t *testing.T) {
 	}
 }
 
+func TestPlaylistFilterSearchModeFiltersRenderedQueue(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "First", 1, time.Minute),
+		playlistItem("Alpine", "Second", 2, time.Minute),
+		playlistItem("Beta", "Third", 3, time.Minute),
+		playlistItem("Gamma", "Fourth", 4, time.Minute),
+	)
+
+	m = press(t, m, runeKey('/'))
+	for _, r := range "ALP" {
+		m = press(t, m, runeKey(r))
+	}
+
+	plain := playlistPlain(m)
+	if !strings.Contains(plain, "Alpha") || !strings.Contains(plain, "Alpine") {
+		t.Errorf("filtered playlist missing matches:\n%s", plain)
+	}
+	if strings.Contains(plain, "Beta") || strings.Contains(plain, "Gamma") {
+		t.Errorf("filtered playlist kept non-matches:\n%s", plain)
+	}
+
+	m = press(t, m, specialKey(tea.KeyEnter))
+	plain = playlistPlain(m)
+	if !strings.Contains(plain, "Alpha") || strings.Contains(plain, "Beta") {
+		t.Errorf("filter not kept after Enter:\n%s", plain)
+	}
+
+	m = press(t, m, runeKey('/'))
+	m = press(t, m, specialKey(tea.KeyEscape))
+	plain = playlistPlain(m)
+	if !strings.Contains(plain, "Beta") || !strings.Contains(plain, "Gamma") {
+		t.Errorf("Esc did not clear the filter:\n%s", plain)
+	}
+}
+
+func TestPlaylistFilterBackspaceEditsQuery(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Beta", "", 2, time.Minute),
+	)
+
+	m = press(t, m, runeKey('/'))
+	for _, r := range "bet" {
+		m = press(t, m, runeKey(r))
+	}
+	if plain := playlistPlain(m); !strings.Contains(plain, "Beta") || strings.Contains(plain, "Alpha") {
+		t.Fatalf("query did not filter before backspace:\n%s", plain)
+	}
+
+	for range 3 {
+		m = press(t, m, specialKey(tea.KeyBackspace))
+	}
+	if plain := playlistPlain(m); !strings.Contains(plain, "Alpha") || !strings.Contains(plain, "Beta") {
+		t.Errorf("backspace did not restore the full list:\n%s", plain)
+	}
+}
+
+func TestPlaylistFilterMatchesArtist(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Song", "Alpha Band", 1, time.Minute),
+		playlistItem("Other", "Beta Band", 2, time.Minute),
+	)
+	m.playlistFilter = "alpha band"
+
+	plain := playlistPlain(m)
+	if !strings.Contains(plain, "Song") || strings.Contains(plain, "Other") {
+		t.Errorf("artist filter did not match the displayed label:\n%s", plain)
+	}
+}
+
+func TestPlaylistFilterNavigationAndOpenUseVisibleRows(t *testing.T) {
+	m, fp := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Hidden", "", 2, time.Minute),
+		playlistItem("Alpine", "", 3, time.Minute),
+		playlistItem("Hidden Two", "", 4, time.Minute),
+		playlistItem("Alto", "", 5, time.Minute),
+	)
+
+	m = press(t, m, runeKey('/'))
+	for _, r := range "al" {
+		m = press(t, m, runeKey(r))
+	}
+	m = press(t, m, specialKey(tea.KeyDown))
+	m = press(t, m, specialKey(tea.KeyDown))
+
+	m = press(t, m, specialKey(tea.KeyEnter))
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = runCmd(t, m, cmd)
+
+	if snapshot := m.queue.Snapshot(); snapshot.Current != 4 {
+		t.Errorf("queue current after filtered open = %d, want 4 (Alto)", snapshot.Current)
+	}
+	if m.playlistSelected != 2 {
+		t.Errorf("playlist selection = %d, want visible row 2", m.playlistSelected)
+	}
+	if len(fp.played) != 1 || fp.played[0].Title != "Alto" {
+		t.Fatalf("played = %#v, want Alto", fp.played)
+	}
+}
+
+func TestPlaylistFilterRemoveUsesVisibleRow(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Hidden", "", 2, time.Minute),
+		playlistItem("Alpine", "", 3, time.Minute),
+		playlistItem("Hidden Two", "", 4, time.Minute),
+		playlistItem("Alto", "", 5, time.Minute),
+	)
+	m.playlistFilter = "al"
+	m.playlistSelected = 2
+
+	m, cmd := pressForCmd(t, m, runeKey('d'))
+	m = runCmd(t, m, cmd)
+
+	titles := queueTitles(m)
+	want := []string{"Alpha", "Hidden", "Alpine", "Hidden Two"}
+	if fmt.Sprint(titles) != fmt.Sprint(want) {
+		t.Errorf("titles after filtered remove = %v, want %v", titles, want)
+	}
+	if m.playlistSelected != 1 {
+		t.Errorf("selection after filtered remove = %d, want 1", m.playlistSelected)
+	}
+}
+
+func TestPlaylistFilterMoveStepsToVisibleNeighbour(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Hidden", "", 2, time.Minute),
+		playlistItem("Alpine", "", 3, time.Minute),
+		playlistItem("Hidden Two", "", 4, time.Minute),
+		playlistItem("Alto", "", 5, time.Minute),
+	)
+	m.playlistFilter = "al"
+	m.playlistSelected = 0
+
+	m, cmd := pressForCmd(t, m, runeKey('J'))
+	m = runCmd(t, m, cmd)
+
+	want := []string{"Hidden", "Alpine", "Alpha", "Hidden Two", "Alto"}
+	if titles := queueTitles(m); fmt.Sprint(titles) != fmt.Sprint(want) {
+		t.Errorf("titles after filtered move down = %v, want %v", titles, want)
+	}
+	if m.playlistSelected != 1 {
+		t.Errorf("selection after filtered move = %d, want 1", m.playlistSelected)
+	}
+
+	m, cmd = pressForCmd(t, m, runeKey('K'))
+	m = runCmd(t, m, cmd)
+
+	want = []string{"Hidden", "Alpha", "Alpine", "Hidden Two", "Alto"}
+	if titles := queueTitles(m); fmt.Sprint(titles) != fmt.Sprint(want) {
+		t.Errorf("titles after filtered move up = %v, want %v", titles, want)
+	}
+	if m.playlistSelected != 0 {
+		t.Errorf("selection after filtered move up = %d, want 0", m.playlistSelected)
+	}
+}
+
+func TestPlaylistFilterIsRememberedPerTab(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Beta", "", 2, time.Minute),
+	)
+	m.playlistFilter = "alp"
+
+	m.tabs[1].queue.Append(
+		playlistItem("Gamma", "", 1, time.Minute),
+		playlistItem("Delta", "", 2, time.Minute),
+	)
+
+	m = runCmd(t, m, m.switchTab(1))
+	m = press(t, m, runeKey('/'))
+	for _, r := range "gam" {
+		m = press(t, m, runeKey(r))
+	}
+	m = press(t, m, specialKey(tea.KeyEnter))
+	if m.playlistFilter != "gam" {
+		t.Errorf("tab 1 filter = %q, want gam", m.playlistFilter)
+	}
+	plain := playlistPlain(m)
+	if !strings.Contains(plain, "Gamma") || strings.Contains(plain, "Delta") {
+		t.Errorf("tab 1 filter not applied:\n%s", plain)
+	}
+
+	m = runCmd(t, m, m.switchTab(0))
+	if m.playlistFilter != "alp" {
+		t.Errorf("tab 0 filter = %q, want alp", m.playlistFilter)
+	}
+	plain = playlistPlain(m)
+	if !strings.Contains(plain, "Alpha") || strings.Contains(plain, "Beta") {
+		t.Errorf("tab 0 filter not restored:\n%s", plain)
+	}
+}
+
+func TestPlaylistGotoPlayingClearsFilterHidingCurrent(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Hidden", "", 2, time.Minute),
+		playlistItem("Alto", "", 3, time.Minute),
+	)
+	m.queue.SetCurrent(1)
+	m.playlistFilter = "al"
+	m.playlistSearch = "al"
+	m.playlistSelected = 0
+
+	m = press(t, m, runeKey('g'))
+
+	if m.playlistFilter != "" {
+		t.Errorf("filter after goto playing = %q, want cleared", m.playlistFilter)
+	}
+	if m.playlistSelected != 1 {
+		t.Errorf("selection after goto playing = %d, want 1", m.playlistSelected)
+	}
+}
+
+func TestPlaylistQueueReplacementClearsFilter(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(playlistItem("Alpha", "", 1, time.Minute))
+	m.playlistFilter = "al"
+	m.playlistSearch = "al"
+
+	m.applyBrowserPlay(browserPlayMsg{
+		gen:      m.browserGen,
+		seq:      m.playSeq,
+		items:    []queue.Item{playlistItem("Beta", "", 1, time.Minute)},
+		selected: 0,
+		status:   "playing 1 item(s)",
+	})
+
+	if m.playlistFilter != "" || m.playlistSearch != "" {
+		t.Errorf("filter after queue replacement = %q/%q, want cleared", m.playlistFilter, m.playlistSearch)
+	}
+	if m.playlistSelected != 0 {
+		t.Errorf("selection after queue replacement = %d, want 0", m.playlistSelected)
+	}
+}
+
+func TestPlaylistRestoreClearsFilter(t *testing.T) {
+	store := &fakeStore{snapshot: queue.Snapshot{
+		Items: []queue.Item{
+			{Path: "/music/hidden.flac", Title: "Hidden", Duration: time.Minute},
+			{Path: "/music/alpha.flac", Title: "Alpha", Duration: time.Minute},
+		},
+		Current: 0,
+	}}
+	m, _ := newPlaylistModel(t, func(opts *Options) { opts.Store = store })
+	m.playlistFilter = "al"
+	m.playlistSearch = "al"
+	m.tabs[0].filter = "al"
+
+	m = runCmd(t, m, m.restoreCmd())
+
+	if m.playlistFilter != "" || m.playlistSearch != "" {
+		t.Errorf("filter after restore = %q/%q, want cleared", m.playlistFilter, m.playlistSearch)
+	}
+	if m.tabs[0].filter != "" {
+		t.Errorf("stored tab filter after restore = %q, want cleared", m.tabs[0].filter)
+	}
+	if m.playlistSelected != 0 {
+		t.Errorf("selection after restore = %d, want current row 0", m.playlistSelected)
+	}
+}
+
+func TestPlaylistFilterTitleAndNoMatches(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(playlistItem("Alpha", "", 1, time.Minute))
+
+	m.playlistFilter = "zzz"
+	if plain := playlistPlain(m); !strings.Contains(plain, "No matches") {
+		t.Errorf("no-match playlist lacks empty state:\n%s", plain)
+	}
+
+	m.playlistFilter = "alp"
+	m.playlistSearch = "alp"
+	m.playlistSearching = true
+	if plain := playlistPlain(m); !strings.Contains(plain, "/alp") {
+		t.Errorf("playlist title lacks active search query:\n%s", plain)
+	}
+
+	m.playlistSearching = false
+	plain := playlistPlain(m)
+	if !strings.Contains(plain, "[alp]") {
+		t.Errorf("playlist title lacks accepted filter:\n%s", plain)
+	}
+	for i, line := range m.playlistLines(40, 6) {
+		if got := ansi.StringWidth(line); got != 40 {
+			t.Errorf("line %d width = %d, want 40", i, got)
+		}
+	}
+}
+
+func TestPlaylistFilterKeepsPlaybackOnFullQueue(t *testing.T) {
+	m, _ := newPlaylistModel(t, nil)
+	m.queue.Append(
+		playlistItem("Alpha", "", 1, time.Minute),
+		playlistItem("Alto", "", 2, time.Minute),
+		playlistItem("Hidden", "", 3, time.Minute),
+	)
+	m.queue.SetCurrent(0)
+	m.playlistFilter = "al"
+	m.playlistSearch = "al"
+
+	m = press(t, m, runeKey('n'))
+	if got := m.queue.Snapshot().Current; got != 1 {
+		t.Fatalf("current after next = %d, want 1 (Alto)", got)
+	}
+	if m.playlistSelected != 1 {
+		t.Errorf("selection after follow = %d, want visible row 1", m.playlistSelected)
+	}
+
+	m = press(t, m, runeKey('n'))
+	if got := m.queue.Snapshot().Current; got != 2 {
+		t.Fatalf("current after next = %d, want 2 (Hidden)", got)
+	}
+	if m.playlistSelected != 1 {
+		t.Errorf("selection after hidden current = %d, want to stay at 1", m.playlistSelected)
+	}
+	if plain := playlistPlain(m); strings.Contains(plain, "Hidden") {
+		t.Errorf("filter stopped hiding a non-match:\n%s", plain)
+	}
+}
+
 func TestPlaylistEnterPlaysSelectedAndKeepsSelection(t *testing.T) {
 	m, fp := newPlaylistModel(t, nil)
 	items := []queue.Item{
@@ -752,6 +1083,8 @@ func TestClearStopsAndEmpties(t *testing.T) {
 		playlistItem("Two", "", 2, time.Minute),
 	)
 	m.playlistSelected = 1
+	m.playlistFilter = "tw"
+	m.playlistSearch = "tw"
 
 	m, cmd := pressForCmd(t, m, runeKey('c'))
 	if m.prompt.mode != promptConfirmClear {
@@ -767,6 +1100,9 @@ func TestClearStopsAndEmpties(t *testing.T) {
 	}
 	if m.playlistSelected != 0 || m.playlistOffset != 0 {
 		t.Errorf("selection/offset = %d/%d, want 0/0", m.playlistSelected, m.playlistOffset)
+	}
+	if m.playlistFilter != "" || m.playlistSearch != "" {
+		t.Errorf("filter after clear = %q/%q, want cleared", m.playlistFilter, m.playlistSearch)
 	}
 }
 

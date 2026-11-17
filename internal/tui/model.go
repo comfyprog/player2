@@ -59,6 +59,7 @@ type playlistTab struct {
 	name     string
 	selected int
 	offset   int
+	filter   string
 }
 
 // Model is the Bubble Tea model for the player2 shell.
@@ -151,9 +152,13 @@ type Model struct {
 	bookmarkSaveMu   sync.Mutex
 	bookmarksFlushed bool
 
-	// Playlist pane state.
-	playlistSelected int
-	playlistOffset   int
+	// Playlist pane state. playlistFilter is the accepted view filter and
+	// playlistSearch its editable input while playlistSearching is true.
+	playlistSelected  int
+	playlistOffset    int
+	playlistFilter    string
+	playlistSearch    string
+	playlistSearching bool
 
 	// lastVolume restores the previous level after a mute toggle.
 	lastVolume int
@@ -459,13 +464,19 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKey(key)
 	}
 
-	// Ctrl+C remains an escape hatch while the browser filter captures
-	// printable keys.
+	// Ctrl+C remains an escape hatch while a pane filter captures printable
+	// keys.
 	if m.browserSearching && m.focus == PaneBrowser && key == "ctrl+c" {
 		return m, tea.Quit
 	}
 	if m.browserSearching && m.focus == PaneBrowser {
 		return m.handleBrowserSearchKey(msg)
+	}
+	if m.playlistSearching && m.focus == PanePlaylist && key == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if m.playlistSearching && m.focus == PanePlaylist {
+		return m.handlePlaylistSearchKey(msg)
 	}
 
 	action, ok := m.keys.Action(key)
