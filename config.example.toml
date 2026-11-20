@@ -89,8 +89,8 @@ toggle_zoom = ["z"]             # show only the focused pane
 search = ["/"]                  # filter the focused pane by substring
 
 # Browsing
-open = ["enter"]                # enter a directory/CUE folder or play selection
-preview = ["shift+enter"]       # audition without changing the queue
+open = ["enter"]                # enter a directory/CUE/playlist folder or preview the selection
+preview = ["shift+enter"]       # preview alias; audition without changing the queue
 parent = ["backspace"]          # go up one directory
 up = ["up", "k"]                # move selection up
 down = ["down", "j"]            # move selection down
@@ -106,7 +106,7 @@ show_bookmarks = ["F"]          # show the bookmark list
 
 # Queue
 add = ["a"]                     # add selection to the queue
-add_all = ["A"]                 # add current directory recursively
+add_all = ["A"]                 # add current location recursively (playlists expand only when they are the current location)
 remove = ["d"]                  # remove selected queue item
 move_up = ["K"]                 # move selected queue item up
 move_down = ["J"]               # move selected queue item down

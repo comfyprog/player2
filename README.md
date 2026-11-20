@@ -86,14 +86,14 @@ All keys are configurable; these are the defaults.
 | Switch pane | `Tab` | Move between the browser and playlist |
 | Switch playlist tab | `Alt+0`…`Alt+9` | Show playlist tab 0–9 |
 | Zoom active pane | `z` | Show only the focused pane |
-| Open/play | `Enter` | Open a directory/CUE folder or play the selection |
-| Preview track | `Shift+Enter` | Play a track without changing the queue |
+| Open/preview | `Enter` | Open a directory/CUE/playlist folder or preview the selection |
+| Preview track | `Shift+Enter` | Preview through the current listing (alias for `Enter` on a playable row) |
 | Parent directory | `Backspace` | Go up one directory |
 | Move up/down | `Up`/`k`, `Down`/`j` | Move the selection |
 | Page up/down | `PgUp`, `PgDn` | Move one screen |
 | First/last | `Home`, `End` | Jump to the first or last row |
 | Add | `a` | Add the selection to the active tab |
-| Add all | `A` | Add the whole directory, recursively |
+| Add all | `A` | Add the whole current location, recursively |
 | Remove | `d` | Remove the selected item from the active tab |
 | Move item up/down | `K`, `J` | Reorder the selected item in the active tab |
 | Play/pause | `Space` | Pause/resume, or start the active tab's current item |
@@ -115,18 +115,22 @@ All keys are configurable; these are the defaults.
 | Clear queue | `c` | Clear the active tab (with confirmation) |
 | Go to playing | `g` | Jump to the sounding tab's current item |
 
-`Shift+Enter` (`preview` in `[keys]`) auditions the highlighted audio file or CUE
-track without touching the queue, its current item, or the saved queue file.
-The preview stops when the track ends; `n`/`b` are ignored while it is active,
-and pause, seek, volume, and `x` still work. Preview relies on the terminal
-reporting `Shift+Enter` distinctly from `Enter`; if yours does not, bind
-`preview` to another key in `[keys]`. For tmux, see [tmux](#tmux) below.
+`Enter` on an audio file or CUE track starts a preview at the selected row.
+`Shift+Enter` (`preview` in `[keys]`) is an alias for the same action. A preview
+advances through the playable rows in the current listing when each track ends,
+copies the visible tab's shuffle/repeat settings when it starts and on every
+advance, and stops after the last item with repeat off. The previewing row is
+marked with `▶`. The preview never changes the queue, its current item, shuffle
+or repeat, or the saved queue file. `n`/`b` are ignored while it is active, and
+pause, seek, volume, and `x` still work. Preview relies on the terminal reporting
+`Shift+Enter` distinctly from `Enter`; if yours does not, bind `preview` to
+another key in `[keys]`. For tmux, see [tmux](#tmux) below.
 
 ### tmux
 
 tmux does not forward modified keys by default, so `Shift+Enter` arrives as plain
-`Enter` and player2 opens the track instead of previewing it. Enable extended
-keys in `~/.tmux.conf`:
+`Enter`. That is safe: both keys preview playable rows. Enable extended keys in
+`~/.tmux.conf` if you want the distinct binding:
 
 ```tmux
 set -s extended-keys on
@@ -166,8 +170,8 @@ runs.
 
 Press `f` (`add_bookmark` in `[keys]`) in the browser to add the current
 directory to a small global bookmark list. Adding the same directory twice is a
-no-op, and CUE virtual folders cannot be bookmarked. Bookmarks are shortcuts,
-not a library index.
+no-op, and CUE and playlist virtual folders cannot be bookmarked. Bookmarks are
+shortcuts, not a library index.
 
 Press `F` (`show_bookmarks` in `[keys]`) to replace the browser listing with the
 bookmark list. It behaves like a directory listing: arrows, paging, Home/End,
@@ -197,7 +201,7 @@ tab that owns the current sound is marked with `▶`.
 - `Alt+0`…`Alt+9` switch the visible tab. There are no modifier-free tab
   shortcuts by default; bind `tab_0`…`tab_9` in `[keys]` to change them.
 - Every tab has its own queue, current item, selection, filter, shuffle, and
-  repeat. Browser add/open, remove, move, clear, save, and go-to-playing act on
+  repeat. Browser add, remove, move, clear, save, and go-to-playing act on
   the visible tab.
 - `/` filters the visible tab with an incremental, case-insensitive substring
   match on the displayed title and artist. The tab strip shows `/query` while
@@ -226,8 +230,8 @@ tab that owns the current sound is marked with `▶`.
   `[keys]`.
 
 Tab queues and names are session state, not playlist files. `w` writes only the
-visible tab's queue to an `.m3u`; the tab name is not included, and loading an
-`.m3u` replaces the visible tab's queue without changing its name.
+visible tab's queue to an `.m3u`; the tab name is not included. Adding a playlist
+folder appends its contents to the visible tab without changing its name.
 
 ## Configuration
 
@@ -325,6 +329,14 @@ player2 reads and writes `.m3u` and `.m3u8` playlists. Paths are local; relative
 paths are resolved against the playlist's directory. Remote URLs and remote
 `file://` hosts are rejected.
 
+Each playlist file also appears in the browser as a virtual folder named after
+the file with a trailing slash, for example `Mix.m3u/`. Opening it lists its
+resolvable entries in playlist order; missing files are skipped and reported in
+the status line. The audio files a playlist references stay visible in the
+parent directory beside the folder. Press `a` on the folder to append its
+contents to the visible tab, or `A` inside it to append all of its contents.
+`Enter` on the folder enters it, while `Enter` on an item inside previews it.
+
 A playlist entry can point at one track inside a CUE sheet. Put the CUE
 reference on the line before the audio file it belongs to:
 
@@ -350,8 +362,8 @@ are hidden from the surrounding directory listing so the album is not shown
 twice.
 
 Opening the folder lists one entry per track with its title, performer, album,
-start offset, and duration. Entering a track queues it and starts playback at
-the correct offset; seeking stays within the track.
+start offset, and duration. Enter previews it; `a` queues it. Playback starts at
+the correct offset, and seeking stays within the track.
 
 An invalid CUE (parse error, missing `FILE`, missing audio, bad `INDEX`, or a
 track ending before it starts) is shown as an error entry and hides nothing, so
@@ -418,7 +430,8 @@ Manual checks, when a real terminal and audio device are available:
 - Play an APE, ALAC, and Opus file.
 - Open a single-file FLAC/APE album with a `.cue` sheet and play each track.
 - Pause, seek backward/forward, and confirm the position stays within the track.
-- Save the active tab with `w`, load the `.m3u` from the browser, and confirm entries.
+- Save the active tab with `w`, enter the playlist folder from the browser,
+  press `a` on an entry, and confirm it is appended.
 - Start playback in tab 0, switch to tab 2 with `Alt+2`, and confirm audio and
   the header stay on tab 0.
 - Name a tab with `T`, restart with `restore_queue = true`, and confirm the tab

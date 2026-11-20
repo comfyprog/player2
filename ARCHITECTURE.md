@@ -14,8 +14,9 @@ player2 is a single-process Linux terminal application with these invariants:
 - Local files only. No network calls; FFmpeg is restricted to file input.
 - Broad format support comes from FFmpeg. The application discovers files by
   extension and delegates decoding and metadata to `ffmpeg`/`ffprobe`.
-- Valid CUE sheets are first-class: they appear as virtual folders whose tracks
-  are independently seekable queue items.
+- Valid CUE sheets and M3U/M3U8 playlists are first-class virtual folders: CUE
+  tracks and playlist entries can be browsed, previewed, and queued
+  independently.
 - The audio path is isolated behind interfaces so the UI and queue never depend on
   a specific decoder or output backend.
 - v1 does not promise gapless playback. A new FFmpeg process is started per queue
@@ -67,7 +68,7 @@ ReplayGain, scrobbling, mouse support, remote control, and Windows/macOS.
 | `internal/config` | defaults, TOML, key-action vocabulary | xdg (indirectly via loader) |
 | `internal/cue` | CUE parsing/validation/path resolution | stdlib, x/text |
 | `internal/meta` | `ffprobe` invocation, tag/codec/duration parsing, cache | stdlib |
-| `internal/library` | directory listings, CUE virtual folders, `Walk` | cue, meta |
+| `internal/library` | directory listings, CUE/playlist virtual folders, `Walk` | cue, meta |
 | `internal/queue` | queue model, IDs, shuffle/repeat, snapshots | stdlib |
 | `internal/playlist` | M3U read/write, CUE extension | queue, cue |
 | `internal/store` | tabbed queue and bookmark JSON persistence and queue pruning | queue |
@@ -270,7 +271,7 @@ decoder `done`, then Abort/Reset the ring. This prevents a writer still blocked 
 - Multi-file sheets are supported. `AllTracks()` flattens them in order.
 - `ParseError` carries a 1-based line number. Input is capped at 4 MiB.
 
-### Scanner and virtual CUE folders
+### Scanner and virtual folders
 
 `internal/library.Scanner` reads one directory or walks a tree. It detects audio
 extensions (case-insensitive), `.m3u`/`.m3u8`, `.cue`, directories, and symlinks.
@@ -296,9 +297,16 @@ so the underlying audio remains visible and playable.
 metadata (title, artist, album, track number). `ResolveCueTrack(ctx, cuePath, n)`
 treats `n` as the sheet `TRACK` number.
 
+A `.m3u`/`.m3u8` file becomes `KindPlaylist`, a virtual container named
+`base(file)/` whose `Path` is the playlist file itself. A playlist folder hides
+nothing: the audio it references stays visible in the surrounding listing. Its
+contents come from `playlist.Load` in playlist order; missing entries are skipped
+and counted for the status line. A resolvable CUE reference becomes a
+`KindCueTrack` entry, otherwise the whole-file entry is kept.
+
 `Walk` returns playable entries only (audio + CUE tracks), expands CUE folders in
-place, follows symlinks only when configured, and uses resolved real paths to skip
-cycles and duplicate subtrees.
+place, skips playlist folders without expanding them, follows symlinks only when
+configured, and uses resolved real paths to skip cycles and duplicate subtrees.
 
 ## Queue and persistence
 
@@ -427,6 +435,10 @@ When a resolved CUE playlist item is queued, the sheet's `Start`/`Duration` are
 authoritative; EXTINF is display metadata only. Missing files are skipped and
 reported in the status line.
 
+The TUI presents each playlist file as a virtual folder backed by the same
+`playlist.Load` loader used for queue addition, so browsing and adding agree on
+playlist order, CUE resolution, and skipped entries.
+
 ## TUI architecture
 
 ### Model and layout
@@ -468,34 +480,41 @@ screen, including areas after nested style resets.
 
 ### Browser
 
-- Navigation stack stores path, selected index, offset, and whether the location is
-  a CUE folder. Backspace restores the prior selection/offset; with no history it
-  moves to the filesystem parent, selecting the directory just left. At `/` it is a
-  no-op.
-- Directory/CUE loads are async with a generation counter. Stale results are
-  ignored; the previous listing is cleared when the destination changes so actions
-  cannot target stale rows. Loading blocks open/add actions.
+- Navigation stack stores path, selected index, offset, and the container kind
+  (`KindDir`, `KindCueDir`, or `KindPlaylist`). Backspace restores the prior
+  selection/offset/container; with no history it moves to the filesystem parent,
+  selecting the directory just left. At `/` it is a no-op.
+- Directory, CUE, and playlist folder loads are async with a generation counter;
+  the loader branches on the container kind. Stale results are ignored; the
+  previous listing is cleared when the destination changes so actions cannot
+  target stale rows. Loading blocks open/add actions.
 - `/` enters an incremental, case-insensitive substring filter. Printable keys edit
   the query; Up/Down/PgUp/PgDn/Home/End move within filtered rows; Enter accepts and
   keeps the filter; Esc clears it. Navigation clears the filter; rescan preserves
   it.
-- `a` adds the selection: directory/CUE recursively, playlist expanded, single
-  audio/CUE track appended.
-- `A` adds the whole current location recursively.
+- `a` adds the selection: directories recursively, CUE folders through their
+  tracks, playlist folders through `playlist.Load`, and a single audio file or
+  CUE track appended.
+- `A` adds the whole current location recursively; inside a playlist folder it
+  adds that playlist's entries.
 - `R` rescans, trying to keep the selected entry by identity.
-- Enter on a directory/CUE folder descends. Enter on audio/CUE track/playlist
-  replaces the queue with the playable entries at the current level and starts at
-  the selection. CUE folders expand in place; playlists are not expanded into the
-  level queue (only when selected directly). Playlist loading stops playback,
-  starts an async expansion, replaces the queue, plays the first item, and reports
-  skipped missing files.
-- Shift+Enter previews an audio file or CUE track without touching the queue.
-  Preview items live only in the TUI, get IDs from the top of the uint64 range so
-  they cannot collide with queue IDs, and persist nowhere. Queue events are
-  ignored while a preview is active, next/previous are ignored, and a finished
-  preview simply stops. Preview metadata probes update only the preview state.
-  A playback-intent epoch drops stale async level/playlist builds so a slow
-  Enter cannot replace a preview started afterwards.
+- Enter on a directory, CUE folder, or playlist folder descends into it. Enter on
+  an audio file or CUE track starts a preview of the playable rows in the visible
+  listing, beginning at the selection. It never changes the queue, its current
+  item, shuffle/repeat, or the saved queue file; `a`/`A` remain the only browser
+  queue mutations.
+- Shift+Enter is an alias for the same preview action. A preview session keeps a
+  private `queue.Queue` over the playable rows in the visible listing, starts at
+  the selected row, advances on `finished`, and copies the visible tab's current
+  shuffle/repeat at start and on every advance. With repeat off it stops after
+  the last item and reports `preview finished`. Queue events and next/previous
+  are ignored while it is active, and preview metadata probes update only the
+  preview state. Each previewed track gets a fresh ID from the top of the uint64
+  range so it cannot collide with queue IDs, and nothing about the preview is
+  persisted.
+- The previewing row is marked with `▶ ` and the playing style unless it is
+  selected, which keeps selection styling. The marker clears when the browser
+  shows a listing other than the one that started the preview.
 - Browser CUE-track rows show `NN. Title — Performer` and the sheet duration,
   right-aligned and width-safe.
 - `t` toggles plain audio rows between filenames and embedded tags
@@ -528,9 +547,11 @@ screen, including areas after nested style resets.
 - Queue replacement/restore selects the active tab's current item. Manual and
   automatic advance move a tab's selection only when it was already on the
   previous current item.
-- Add/open/remove/move/clear/save and selection movement act on the visible tab.
-  Loading a directory, CUE folder, or playlist replaces the visible tab and
-  starts playback from it.
+- Add/remove/move/clear/save and selection movement act on the visible tab.
+  Entering browser folders changes only the browser; `a`/`A` append to the visible
+  tab. Preview playback uses the same serialized transport chain but is tracked
+  separately: it has no sounding tab, ignores queue events, and never replaces the
+  queue.
 - Transport is global: pause/resume (or play the visible tab's current item when
   stopped), stop, next/prev, seek ±5s, volume ±5, mute, shuffle, repeat. While a
   sounding tab exists, next/previous and auto-advance operate on that tab even
@@ -575,9 +596,9 @@ screen, including areas after nested style resets.
   `q`/Ctrl+C quit.
 - `w` opens a text-input save prompt (Bubbles v2 `textinput`). The default
   `playlist.m3u` is a placeholder so typing replaces it; empty submit uses the
-  default. Relative paths resolve against the browser directory (the CUE file's
-  directory when inside a CUE folder). Existing targets require overwrite
-  confirmation. The write itself runs in a `tea.Cmd`.
+  default. Relative paths resolve against the browser directory (the CUE or
+  playlist file's directory when inside one of those virtual folders). Existing
+  targets require overwrite confirmation. The write itself runs in a `tea.Cmd`.
 - Clear queue and overwrite use modal `[y/N]` confirmations. Only `y`/`Y` confirm;
   Enter, `n`, and Esc cancel.
 - Keymap actions are a closed vocabulary defined in `internal/config`.
