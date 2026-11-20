@@ -715,7 +715,6 @@ func (m *Model) actionPause() tea.Cmd {
 		m.setStatusOK("nothing to play")
 		return nil
 	}
-	m.beginPlaybackIntent()
 	return m.playItem(m.activeTab, item, "playing "+displayTitle(item))
 }
 
@@ -727,7 +726,6 @@ func (m *Model) actionStop() tea.Cmd {
 		m.clearPreview()
 		m.playbackTab = -1
 		m.playbackGen = 0
-		m.beginPlaybackIntent()
 		return nil
 	}
 	return m.stopPlayback()
@@ -751,7 +749,6 @@ func (m *Model) actionNext() tea.Cmd {
 	}
 	m.bumpQueueEpoch()
 	m.followSelectionFor(tab, previous, selected, hadPrevious, hadSelected)
-	m.beginPlaybackIntent()
 	return tea.Batch(m.playItem(tab, item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
@@ -772,7 +769,6 @@ func (m *Model) actionPrevious() tea.Cmd {
 	}
 	m.bumpQueueEpoch()
 	m.followSelectionFor(tab, previous, selected, hadPrevious, hadSelected)
-	m.beginPlaybackIntent()
 	return tea.Batch(m.playItem(tab, item, "playing "+displayTitle(item)), m.saveQueue())
 }
 
@@ -994,7 +990,6 @@ func (m *Model) playlistOpen() tea.Cmd {
 		m.setStatusOK("nothing to play")
 		return nil
 	}
-	m.beginPlaybackIntent()
 	return tea.Batch(m.playItem(m.activeTab, item, "playing "+displayTitle(item)), m.saveQueue())
 }
 

@@ -1152,6 +1152,51 @@ func TestBrowserPlaylistFolderNavigation(t *testing.T) {
 	}
 }
 
+func TestBrowserPlaylistFolderPreviewStartsFolderEntry(t *testing.T) {
+	dir := t.TempDir()
+	one := writeTestFile(t, dir, "one.flac", "")
+	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\n#EXTINF:60,Artist - One\none.flac\n")
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		"/music": {
+			{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath},
+		},
+	}}
+	m, fp := newBrowserModel(t, sc)
+	m.browserPath = "/music"
+	m.browserEntriesPath = "/music"
+	m.browserEntries = sc.dirs["/music"]
+	m.browserSelected = 0
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+	if len(m.browserEntries) != 1 {
+		t.Fatalf("playlist entries = %#v, want one row", m.browserEntries)
+	}
+
+	queueBefore := m.queue.Snapshot()
+	m, cmd = pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+	if got := fp.played[0].Path; got != one {
+		t.Errorf("played path = %q, want %q", got, one)
+	}
+	if !m.previewActive {
+		t.Error("previewActive = false, want preview active for the folder entry")
+	}
+	if !m.previewingEntry(m.browserEntries[0]) {
+		t.Errorf("entry %#v is not marked as previewing", m.browserEntries[0])
+	}
+	if after := m.queue.Snapshot(); !snapshotsEqual(queueBefore, after) {
+		t.Errorf("queue changed after folder preview:\n before %+v\n after  %+v", queueBefore, after)
+	}
+	if got := m.store.(*fakeStore).saveCount(); got != 0 {
+		t.Errorf("queue saves = %d, want 0 for folder preview", got)
+	}
+}
+
 func TestBrowserPlaylistFolderStateSurvivesRescanAndBookmarks(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "one.flac", "")

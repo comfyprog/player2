@@ -67,6 +67,58 @@ func TestSeekReplacingPendingPreviewClearsPreview(t *testing.T) {
 	}
 }
 
+func TestPreviewFinishedAfterStopDoesNotAdvance(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))
+	m.queue.SetCurrent(0)
+	before := m.queue.Snapshot()
+	m.browserEntriesPath = "/music"
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+	}
+	m.browserSelected = 0
+
+	m = startTestPreview(t, m)
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+	previewID := fp.played[0].ID
+
+	// Simulate a transport operation already in flight so Stop can only be
+	// queued as the pending action.
+	m.transportBusy = true
+	m.transportSeq = 7
+	cmd := m.stopPlayback()
+	if cmd != nil {
+		t.Fatalf("queued stop returned command %T, want nil", cmd)
+	}
+	if m.previewActive {
+		t.Error("previewActive = true after stop, want it cleared synchronously")
+	}
+	if m.pendingTransport == nil || m.pendingTransport.kind != transportStop {
+		t.Fatalf("pending transport = %+v, want transportStop", m.pendingTransport)
+	}
+
+	// A late finish event from the old preview must not advance over the Stop.
+	cmd = m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: previewID},
+		ok:    true,
+	})
+	if cmd != nil {
+		t.Fatalf("old preview finish returned command %T, want nil", cmd)
+	}
+	if got := len(fp.played); got != 1 {
+		t.Errorf("Play calls after old preview finish = %d, want 1", got)
+	}
+	if after := m.queue.Snapshot(); !snapshotsEqual(before, after) {
+		t.Errorf("queue changed after old preview finish:\n before %+v\n after  %+v", before, after)
+	}
+	if m.pendingTransport == nil || m.pendingTransport.kind != transportStop {
+		t.Errorf("pending transport = %+v, want the original transportStop", m.pendingTransport)
+	}
+}
+
 func TestPreviewHeaderAndProgressUsePreviewItem(t *testing.T) {
 	m, _ := newBrowserModel(t, &testScanner{})
 	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))
@@ -207,6 +259,9 @@ func TestBrowserPreviewMarkerFollowsAdvance(t *testing.T) {
 	if !strings.HasPrefix(first, "▶ ") {
 		t.Fatalf("first row = %q, want preview marker", first)
 	}
+	if !strings.HasPrefix(second, "  ") {
+		t.Fatalf("second row = %q, want a two-space blank gutter before advance", second)
+	}
 	if strings.HasPrefix(second, "▶") {
 		t.Fatalf("second row = %q, want a blank gutter before advance", second)
 	}
@@ -220,6 +275,9 @@ func TestBrowserPreviewMarkerFollowsAdvance(t *testing.T) {
 	lines = m.browserLines(80, 20)
 	first = ansi.Strip(lines[1])
 	second = ansi.Strip(lines[2])
+	if !strings.HasPrefix(first, "  ") {
+		t.Errorf("first row = %q, want a two-space blank gutter after advance", first)
+	}
 	if strings.HasPrefix(first, "▶") {
 		t.Errorf("first row = %q, want the marker to advance away", first)
 	}

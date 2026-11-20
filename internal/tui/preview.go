@@ -52,9 +52,7 @@ func (m *Model) browserPreview() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	switch entry.Kind {
-	case library.KindAudio, library.KindCueTrack:
-	default:
+	if entry.Kind != library.KindAudio && entry.Kind != library.KindCueTrack {
 		return nil
 	}
 
@@ -124,7 +122,6 @@ func (m *Model) playPreviewCurrent() tea.Cmd {
 	m.previewActive = true
 	m.playbackTab = -1
 	m.playbackGen = 0
-	m.beginPlaybackIntent()
 
 	play := m.requestTransport(transportAction{
 		kind:    transportPlay,
@@ -227,6 +224,12 @@ func (m *Model) applyPreviewMetadata(msg previewMetadataMsg) {
 // handlePreviewEvent consumes player events while a preview is active. Queue
 // events are ignored so a late event from the interrupted queue stream cannot
 // advance playback over the preview.
+//
+// handlePlayerEvent intentionally checks this before its transport-busy/pending
+// guard. stopPlayback clears the preview synchronously before queueing the Stop,
+// so an event from the old preview either finds no active preview (and falls
+// through to the transport guard) or must match the fresh ID of the current
+// preview. The guard still protects the real queue stream from old events.
 func (m *Model) handlePreviewEvent(msg playerEventMsg) (tea.Cmd, bool) {
 	if !m.previewActive {
 		return nil, false
@@ -273,20 +276,11 @@ func (m *Model) playbackItem() (queue.Item, bool) {
 	return m.queue.Current()
 }
 
-// beginPlaybackIntent records a new playback intent and returns its sequence.
-// The sequence lets asynchronous playback work started earlier recognise that
-// a newer request has superseded it.
-func (m *Model) beginPlaybackIntent() uint64 {
-	m.playSeq++
-	return m.playSeq
-}
-
 // stopPlayback stops the player and ends any preview. The serialized stop
 // still runs outside Update.
 func (m *Model) stopPlayback() tea.Cmd {
 	m.clearPreview()
 	m.playbackTab = -1
 	m.playbackGen = 0
-	m.beginPlaybackIntent()
 	return m.requestTransport(transportAction{kind: transportStop})
 }

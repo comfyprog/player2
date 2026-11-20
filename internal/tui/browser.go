@@ -158,9 +158,10 @@ func (m *Model) browserLines(width, height int) []string {
 
 // browserRow formats one browser row. CUE tracks show their duration
 // right-aligned, matching the playlist and the CUE acceptance criteria; other
-// entries show their filename or, in tag mode, their embedded metadata. Every
-// non-bookmark row reserves a two-cell gutter for the preview marker. The
-// result is exactly width cells.
+// entries show their filename or, in tag mode, their embedded metadata.
+// Non-bookmark rows reserve a two-cell gutter for the preview marker when there
+// is room; degenerate CUE widths where the duration alone fills the row may
+// omit it. The result is exactly width cells.
 func (m *Model) browserRow(entry library.Entry, width int, previewing bool) string {
 	if width <= 0 {
 		return ""

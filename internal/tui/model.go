@@ -205,14 +205,11 @@ type Model struct {
 	// preview; previewSource records the listing path that started it so later
 	// rendering can match the preview row. previewSeq hands out IDs from the top
 	// of the uint64 range so a preview item cannot collide with a queue item.
-	// playSeq identifies the latest playback intent so older asynchronous
-	// playback work cannot overwrite a newer request.
 	previewActive bool
 	previewItem   queue.Item
 	previewQueue  *queue.Queue
 	previewSource string
 	previewSeq    uint64
-	playSeq       uint64
 }
 
 // tickMsg is delivered by the periodic status refresh.
