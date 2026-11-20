@@ -318,7 +318,7 @@ func TestBrowserBackAtStartLeavesCueFolder(t *testing.T) {
 		opts.StartDir = cuePath
 	})
 	m = resize(t, m, 80, 10)
-	m.browserCue = true
+	m.browserContainer = library.KindCueDir
 	m.browserEntries = []library.Entry{cueTrackEntry("One", "/music/song.flac", cuePath, 1, 0, 3*time.Minute)}
 	m.browserEntriesPath = cuePath
 
@@ -328,8 +328,8 @@ func TestBrowserBackAtStartLeavesCueFolder(t *testing.T) {
 	if m.browserPath != "/music" {
 		t.Fatalf("browserPath after back at start = %q, want /music", m.browserPath)
 	}
-	if m.browserCue {
-		t.Error("browserCue = true after leaving the initial CUE folder")
+	if m.browserContainer != library.KindDir {
+		t.Errorf("browserContainer = %v after leaving the initial CUE folder, want KindDir", m.browserContainer)
 	}
 	if len(m.browserStack) != 0 {
 		t.Errorf("stack depth = %d, want 0", len(m.browserStack))
@@ -377,8 +377,8 @@ func TestBrowserEnterCueFolderAndBack(t *testing.T) {
 
 	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
 	m = applyBrowserCmd(t, m, cmd)
-	if !m.browserCue {
-		t.Error("browserCue = false after entering a CUE folder")
+	if m.browserContainer != library.KindCueDir {
+		t.Errorf("browserContainer = %v after entering a CUE folder, want KindCueDir", m.browserContainer)
 	}
 	if len(m.browserEntries) != 2 || m.browserEntries[0].Kind != library.KindCueTrack {
 		t.Fatalf("CUE entries = %#v, want two tracks", m.browserEntries)
@@ -386,8 +386,8 @@ func TestBrowserEnterCueFolderAndBack(t *testing.T) {
 
 	m, cmd = pressForCmd(t, m, specialKey(tea.KeyBackspace))
 	m = applyBrowserCmd(t, m, cmd)
-	if m.browserCue {
-		t.Error("browserCue = true after leaving a CUE folder")
+	if m.browserContainer != library.KindDir {
+		t.Errorf("browserContainer = %v after leaving a CUE folder, want KindDir", m.browserContainer)
 	}
 	if m.browserPath != "/music" || len(m.browserEntries) != 1 {
 		t.Errorf("back location = %q with %d entries, want /music with 1", m.browserPath, len(m.browserEntries))
@@ -409,7 +409,7 @@ func TestBrowserCueRowsShowDurationsAtSmallAndLargeSizes(t *testing.T) {
 		m, _ := newBrowserModel(t, &testScanner{})
 		m = resize(t, m, size.width, size.height)
 		m.browserPath = cuePath
-		m.browserCue = true
+		m.browserContainer = library.KindCueDir
 		m.browserEntries = entries
 
 		plain := ansi.Strip(m.View().Content)
@@ -534,7 +534,7 @@ func TestBrowserToggleTagsProbesPlainAudioOnly(t *testing.T) {
 	m.browserEntries = []library.Entry{
 		audioEntry("a.mp3", "/music/a.mp3"),
 		{Kind: library.KindDir, Name: "Sub", Path: "/music/Sub"},
-		{Kind: library.KindPlaylist, Name: "list.m3u", Path: "/music/list.m3u"},
+		{Kind: library.KindPlaylist, Name: "list.m3u/", Path: "/music/list.m3u"},
 		cueTrackEntry("One", "/music/album.flac", "/music/Album.cue", 1, 0, time.Minute),
 		{Kind: library.KindInvalidCue, Name: "Bad.cue", Path: "/music/Bad.cue", Err: errors.New("bad")},
 	}
@@ -662,7 +662,7 @@ func TestBrowserEnterAudioQueuesLevelAndPlaysSelection(t *testing.T) {
 		{Kind: library.KindCueDir, Name: "Album.cue/", Path: cuePath, CuePath: cuePath},
 		audioEntry("b.flac", "/music/b.flac"),
 		{Kind: library.KindInvalidCue, Name: "Bad.cue", Path: "/music/Bad.cue", Err: errors.New("bad")},
-		{Kind: library.KindPlaylist, Name: "list.m3u", Path: "/music/list.m3u"},
+		{Kind: library.KindPlaylist, Name: "list.m3u/", Path: "/music/list.m3u"},
 	}
 	entries[0].Duration = time.Minute
 	entries[2].Duration = 2 * time.Minute
@@ -711,7 +711,7 @@ func TestBrowserEnterCueTrackQueuesWholeCueFolder(t *testing.T) {
 	sc := &testScanner{cues: map[string][]library.Entry{cuePath: tracks}}
 	m, fp := newBrowserModel(t, sc)
 	m.browserPath = cuePath
-	m.browserCue = true
+	m.browserContainer = library.KindCueDir
 	m.browserEntries = tracks
 	m.browserSelected = 1
 
@@ -777,7 +777,7 @@ func TestBrowserAddSelection(t *testing.T) {
 		writeTestFile(t, dir, "one.flac", "")
 		playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\n#EXTINF:60,Artist - Song\none.flac\n")
 		m, _ := newBrowserModel(t, &testScanner{})
-		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}}
 
 		m, cmd := pressForCmd(t, m, runeKey('a'))
 		m = applyBrowserCmd(t, m, cmd)
@@ -969,9 +969,9 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 			}, nil
 		}}
 		m, _ := newBrowserModel(t, sc)
-		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}}
 
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m, cmd := pressForCmd(t, m, runeKey('a'))
 		m = applyBrowserCmd(t, m, cmd)
 		items := m.queue.Snapshot().Items
 		if len(items) != 1 {
@@ -1005,9 +1005,9 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 			}, nil
 		}}
 		m, _ := newBrowserModel(t, sc)
-		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}}
 
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m, cmd := pressForCmd(t, m, runeKey('a'))
 		m = applyBrowserCmd(t, m, cmd)
 		items := m.queue.Snapshot().Items
 		if len(items) != 1 {
@@ -1028,9 +1028,9 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 			return library.Entry{}, errors.New("track vanished")
 		}}
 		m, _ := newBrowserModel(t, sc)
-		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}}
 
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m, cmd := pressForCmd(t, m, runeKey('a'))
 		m = applyBrowserCmd(t, m, cmd)
 		items := m.queue.Snapshot().Items
 		if len(items) != 1 {
@@ -1047,9 +1047,9 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 		present := writeTestFile(t, dir, "present.flac", "")
 		playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\nmissing.flac\npresent.flac\n")
 		m, _ := newBrowserModel(t, &testScanner{})
-		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}}
 
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m, cmd := pressForCmd(t, m, runeKey('a'))
 		m = applyBrowserCmd(t, m, cmd)
 		items := m.queue.Snapshot().Items
 		if len(items) != 1 || items[0].Path != present {
@@ -1068,9 +1068,9 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 		}
 		playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\nfolder.flac\npresent.flac\n")
 		m, _ := newBrowserModel(t, &testScanner{})
-		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath}}
+		m.browserEntries = []library.Entry{{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}}
 
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+		m, cmd := pressForCmd(t, m, runeKey('a'))
 		m = applyBrowserCmd(t, m, cmd)
 		items := m.queue.Snapshot().Items
 		if len(items) != 1 || items[0].Path != present {
@@ -1080,6 +1080,188 @@ func TestBrowserPlaylistCueResolutionAndMissingFiles(t *testing.T) {
 			t.Errorf("statusMsg = %q, want the directory counted as skipped", m.statusMsg)
 		}
 	})
+}
+
+func TestBrowserPlaylistFolderNavigation(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "one.flac", "")
+	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\n#EXTINF:60,Artist - One\none.flac\n")
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		dir: {{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}},
+	}}
+	m, _ := newBrowserModel(t, sc)
+	m.browserPath = dir
+	m.browserEntriesPath = dir
+	m.browserEntries = sc.dirs[dir]
+	queueBefore := m.queue.Snapshot()
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if m.browserContainer != library.KindPlaylist {
+		t.Errorf("browserContainer = %v, want KindPlaylist", m.browserContainer)
+	}
+	if m.browserPath != playlistPath {
+		t.Errorf("browserPath = %q, want %q", m.browserPath, playlistPath)
+	}
+	if len(m.browserEntries) != 1 {
+		t.Fatalf("browser entries = %#v, want one playlist item", m.browserEntries)
+	}
+	if m.browserEntries[0].Kind != library.KindAudio {
+		t.Errorf("entry kind = %v, want KindAudio", m.browserEntries[0].Kind)
+	}
+	if m.browserEntries[0].Name != "One — Artist" {
+		t.Errorf("entry name = %q, want %q", m.browserEntries[0].Name, "One — Artist")
+	}
+	if !snapshotsEqual(queueBefore, m.queue.Snapshot()) {
+		t.Error("entering a playlist folder changed the real queue")
+	}
+	if got := m.store.(*fakeStore).saveCount(); got != 0 {
+		t.Errorf("queue saves = %d, want 0 for playlist navigation", got)
+	}
+
+	m, cmd = pressForCmd(t, m, specialKey(tea.KeyBackspace))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if m.browserContainer != library.KindDir {
+		t.Errorf("browserContainer after back = %v, want KindDir", m.browserContainer)
+	}
+	if m.browserPath != dir {
+		t.Errorf("browserPath after back = %q, want %q", m.browserPath, dir)
+	}
+	if len(m.browserEntries) != 1 || m.browserEntries[0].Kind != library.KindPlaylist {
+		t.Fatalf("parent entries = %#v, want the playlist row", m.browserEntries)
+	}
+	if m.browserSelected != 0 {
+		t.Errorf("browserSelected after back = %d, want 0 (playlist row)", m.browserSelected)
+	}
+}
+
+func TestBrowserPlaylistFolderStateSurvivesRescanAndBookmarks(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "one.flac", "")
+	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\none.flac\n")
+	sc := &testScanner{dirs: map[string][]library.Entry{
+		dir: {{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}},
+	}}
+	m, _ := newBrowserModel(t, sc)
+	m.browserPath = dir
+	m.browserEntriesPath = dir
+	m.browserEntries = sc.dirs[dir]
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+
+	m, cmd = pressForCmd(t, m, runeKey('R'))
+	m = applyBrowserCmd(t, m, cmd)
+	if m.browserContainer != library.KindPlaylist {
+		t.Errorf("browserContainer after rescan = %v, want KindPlaylist", m.browserContainer)
+	}
+	if m.browserPath != playlistPath || m.browserEntriesPath != playlistPath {
+		t.Errorf("rescan location = %q/%q, want %q", m.browserPath, m.browserEntriesPath, playlistPath)
+	}
+	if len(m.browserEntries) != 1 || m.browserEntries[0].Kind != library.KindAudio {
+		t.Fatalf("rescan entries = %#v, want one audio item", m.browserEntries)
+	}
+
+	m, _ = pressForCmd(t, m, runeKey('F'))
+	if !m.browserBookmarks {
+		t.Fatal("bookmark view did not open")
+	}
+	m, cmd = pressForCmd(t, m, specialKey(tea.KeyBackspace))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if m.browserContainer != library.KindPlaylist {
+		t.Errorf("browserContainer after bookmarks = %v, want KindPlaylist", m.browserContainer)
+	}
+	if m.browserPath != playlistPath {
+		t.Errorf("browserPath after bookmarks = %q, want %q", m.browserPath, playlistPath)
+	}
+	if len(m.browserEntries) != 1 || m.browserEntries[0].Kind != library.KindAudio {
+		t.Fatalf("entries after bookmarks = %#v, want one audio item", m.browserEntries)
+	}
+}
+
+func TestBrowserPlaylistFolderSkipsMissingEntries(t *testing.T) {
+	dir := t.TempDir()
+	present := writeTestFile(t, dir, "present.flac", "")
+	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\nmissing.flac\npresent.flac\n")
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserEntries = []library.Entry{
+		{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath},
+	}
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if len(m.browserEntries) != 1 || m.browserEntries[0].Path != present {
+		t.Fatalf("entries = %#v, want only present.flac", m.browserEntries)
+	}
+	if !strings.Contains(m.statusMsg, "skipped 1") {
+		t.Errorf("statusMsg = %q, want a skipped count", m.statusMsg)
+	}
+}
+
+func TestBrowserPlaylistFolderResolvesCueTrack(t *testing.T) {
+	dir := t.TempDir()
+	audio := writeTestFile(t, dir, "song.flac", "")
+	cuePath := writeTestFile(t, dir, "Album.cue", testCueSheet)
+	playlistPath := writeTestFile(t, dir, "list.m3u",
+		"#EXTM3U\n#EXTINF:180,Artist - One\n#EXT-X-PLAYER2-CUE:cue=Album.cue;track=1\nsong.flac\n")
+	sc := &testScanner{resolve: func(cue string, track int) (library.Entry, error) {
+		if cue != cuePath || track != 1 {
+			return library.Entry{}, fmt.Errorf("unexpected resolve %q %d", cue, track)
+		}
+		return library.Entry{
+			Kind: library.KindCueTrack, Path: audio, CuePath: cuePath, TrackNo: 1,
+			Start: 10 * time.Second, Duration: 2 * time.Minute,
+			Meta: meta.Info{Title: "One", Artist: "Artist", Album: "Resolved Album", TrackNo: 1},
+		}, nil
+	}}
+	m, _ := newBrowserModel(t, sc)
+	m.browserEntries = []library.Entry{
+		{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath},
+	}
+
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	m = applyBrowserCmd(t, m, cmd)
+
+	if len(m.browserEntries) != 1 {
+		t.Fatalf("entries = %#v, want one resolved CUE track", m.browserEntries)
+	}
+	entry := m.browserEntries[0]
+	if entry.Kind != library.KindCueTrack {
+		t.Errorf("kind = %v, want KindCueTrack", entry.Kind)
+	}
+	if entry.Path != audio || entry.CuePath != cuePath || entry.TrackNo != 1 {
+		t.Errorf("CUE location = %#v", entry)
+	}
+	if entry.Start != 10*time.Second || entry.Duration != 2*time.Minute {
+		t.Errorf("CUE timing = start %v duration %v", entry.Start, entry.Duration)
+	}
+	if entry.Meta.Title != "One" || entry.Meta.Artist != "Artist" {
+		t.Errorf("CUE metadata = %#v", entry.Meta)
+	}
+	if entry.Name != "01. One — Artist" {
+		t.Errorf("entry name = %q, want %q", entry.Name, "01. One — Artist")
+	}
+}
+
+func TestBrowserAddAllInsidePlaylistFolder(t *testing.T) {
+	dir := t.TempDir()
+	one := writeTestFile(t, dir, "one.flac", "")
+	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\none.flac\n")
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserContainer = library.KindPlaylist
+	m.browserPath = playlistPath
+
+	m, cmd := pressForCmd(t, m, runeKey('A'))
+	m = applyBrowserCmd(t, m, cmd)
+
+	items := m.queue.Snapshot().Items
+	if len(items) != 1 || items[0].Path != one {
+		t.Fatalf("queue items = %#v, want the playlist contents", items)
+	}
 }
 
 func TestQueueItemFromEntryMetadata(t *testing.T) {
@@ -1131,7 +1313,7 @@ func TestBrowserBreadcrumbIsHomeAbbreviatedAndWidthSafe(t *testing.T) {
 	m = resize(t, m, 60, 10)
 
 	m.browserPath = filepath.Join(home, "Music", "Album.cue")
-	m.browserCue = true
+	m.browserContainer = library.KindCueDir
 	if plain := ansi.Strip(m.View().Content); !strings.Contains(plain, "Files: ~/Music/Album.cue") {
 		t.Errorf("breadcrumb lacks home abbreviation: %q", plain)
 	}
@@ -1204,7 +1386,7 @@ func TestBrowserActionsIgnoredWhileLoading(t *testing.T) {
 	m.browserEntriesPath = "/music"
 
 	// Starting a load for a new path clears the old listing immediately.
-	loadCmd := m.loadBrowser("/music/Other", false, 0, 0, "")
+	loadCmd := m.loadBrowser("/music/Other", library.KindDir, 0, 0, "")
 	if loadCmd == nil {
 		t.Fatal("loadBrowser returned no command")
 	}

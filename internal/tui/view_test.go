@@ -633,7 +633,7 @@ func TestViewRemainingColorsFromConfig(t *testing.T) {
 	m.browserEntries = []library.Entry{
 		{Kind: library.KindDir, Name: "Album", Path: "/music/Album"},
 		{Kind: library.KindAudio, Name: "song.flac", Path: "/music/song.flac"},
-		{Kind: library.KindPlaylist, Name: "mix.m3u", Path: "/music/mix.m3u"},
+		{Kind: library.KindPlaylist, Name: "mix.m3u/", Path: "/music/mix.m3u"},
 		{Kind: library.KindInvalidCue, Name: "bad.cue", Path: "/music/bad.cue"},
 	}
 	m.queue.Append(queue.Item{Title: "Current", Duration: time.Minute})
@@ -658,7 +658,7 @@ func TestViewRemainingColorsFromConfig(t *testing.T) {
 	}{
 		{"Album", []string{"38;5;115", "48;5;235"}},
 		{"song.flac", []string{"38;5;111"}},
-		{"mix.m3u", []string{"38;5;112"}},
+		{"mix.m3u/", []string{"38;5;112"}},
 		{"bad.cue", []string{"38;5;113"}},
 		{"Plain", []string{"38;5;250"}},
 		{"[0]", []string{"38;5;114"}},

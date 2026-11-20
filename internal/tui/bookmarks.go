@@ -39,8 +39,15 @@ func (m *Model) addBookmark() tea.Cmd {
 		m.setStatusError("bookmarks unavailable: " + m.bookmarkLoadErr.Error())
 		return nil
 	}
-	if m.browserCue {
-		m.setStatusError("cannot bookmark a CUE folder")
+	if m.browserContainer != library.KindDir {
+		switch m.browserContainer {
+		case library.KindPlaylist:
+			m.setStatusError("cannot bookmark a playlist folder")
+		case library.KindCueDir:
+			m.setStatusError("cannot bookmark a CUE folder")
+		default:
+			m.setStatusError("cannot bookmark this location")
+		}
 		return nil
 	}
 	if m.browserPath == "" || m.browserEntriesPath != m.browserPath {
@@ -66,10 +73,10 @@ func (m *Model) addBookmark() tea.Cmd {
 // remembers where to return. A second toggle or Backspace leaves the list.
 func (m *Model) showBookmarks() {
 	m.bookmarkReturn = browserLocation{
-		Path:     m.browserPath,
-		Selected: m.browserSelected,
-		Offset:   m.browserOffset,
-		Cue:      m.browserCue,
+		Path:      m.browserPath,
+		Selected:  m.browserSelected,
+		Offset:    m.browserOffset,
+		Container: m.browserContainer,
 	}
 	m.browserBookmarks = true
 	// Invalidate a directory load that was already in flight so it cannot
@@ -88,7 +95,7 @@ func (m *Model) closeBookmarks() tea.Cmd {
 	m.browserBookmarks = false
 	m.bookmarkReturn = browserLocation{}
 	m.clearBrowserFilter()
-	return m.loadBrowser(location.Path, location.Cue, location.Selected, location.Offset, "")
+	return m.loadBrowser(location.Path, location.Container, location.Selected, location.Offset, "")
 }
 
 // toggleBookmarks opens the bookmark list, or closes it when already open.
@@ -108,7 +115,7 @@ func (m *Model) openBookmark(path string) tea.Cmd {
 	m.bookmarkReturn = browserLocation{}
 	m.browserStack = nil
 	m.clearBrowserFilter()
-	return m.loadBrowser(path, false, 0, 0, "")
+	return m.loadBrowser(path, library.KindDir, 0, 0, "")
 }
 
 // removeBookmark deletes the selected bookmark and persists the new list.

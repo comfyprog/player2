@@ -127,7 +127,7 @@ func TestInfoBrowserRejectsNonAudioEntries(t *testing.T) {
 		},
 		{
 			name:  "playlist",
-			entry: library.Entry{Kind: library.KindPlaylist, Name: "mix.m3u", Path: "/tmp/music/mix.m3u"},
+			entry: library.Entry{Kind: library.KindPlaylist, Name: "mix.m3u/", Path: "/tmp/music/mix.m3u"},
 			want:  "info: select an audio file",
 		},
 		{

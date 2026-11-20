@@ -17,17 +17,19 @@ import (
 	"player2/internal/queue"
 )
 
-// browserLoadedMsg is the result of an asynchronous directory or CUE load.
-// The generation guards against a slow load overwriting a newer location.
+// browserLoadedMsg is the result of an asynchronous directory, CUE, or
+// playlist folder load. The generation guards against a slow load overwriting a
+// newer location.
 type browserLoadedMsg struct {
-	gen      uint64
-	path     string
-	cue      bool
-	entries  []library.Entry
-	err      error
-	selected int
-	offset   int
-	focus    string
+	gen       uint64
+	path      string
+	container library.Kind
+	entries   []library.Entry
+	skipped   int
+	err       error
+	selected  int
+	offset    int
+	focus     string
 }
 
 // browserPlayMsg is the result of building a queue for a selection.
@@ -435,8 +437,9 @@ func entryKey(entry library.Entry) string {
 
 // loadBrowser starts an asynchronous load and records the destination. The
 // generation is incremented before the command runs so a stale result can be
-// recognised and ignored.
-func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus string) tea.Cmd {
+// recognised and ignored. container selects the scanner or playlist loader for
+// a filesystem directory, CUE folder, or playlist folder.
+func (m *Model) loadBrowser(path string, container library.Kind, selected, offset int, focus string) tea.Cmd {
 	// Loading a directory always leaves the bookmark view. Every current caller
 	// clears it first; enforcing it here keeps a future caller from rendering
 	// directory rows under the bookmark title.
@@ -450,7 +453,7 @@ func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus s
 		m.browserEntriesPath = ""
 	}
 	m.browserPath = path
-	m.browserCue = cue
+	m.browserContainer = container
 	m.browserSelected = selected
 	m.browserOffset = offset
 	m.browserLoading = true
@@ -470,22 +473,27 @@ func (m *Model) loadBrowser(path string, cue bool, selected, offset int, focus s
 		ctx := context.Background()
 		var (
 			entries []library.Entry
+			skipped int
 			err     error
 		)
-		if cue {
+		switch container {
+		case library.KindCueDir:
 			entries, err = scanner.ReadCue(ctx, path)
-		} else {
+		case library.KindPlaylist:
+			entries, skipped, err = loadPlaylistEntries(ctx, scanner, path)
+		default:
 			entries, err = scanner.ReadDir(ctx, path)
 		}
 		return browserLoadedMsg{
-			gen:      gen,
-			path:     path,
-			cue:      cue,
-			entries:  entries,
-			err:      err,
-			selected: selected,
-			offset:   offset,
-			focus:    focus,
+			gen:       gen,
+			path:      path,
+			container: container,
+			entries:   entries,
+			skipped:   skipped,
+			err:       err,
+			selected:  selected,
+			offset:    offset,
+			focus:     focus,
 		}
 	}
 }
@@ -513,7 +521,7 @@ func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) tea.Cmd {
 
 	m.browserEntries = msg.entries
 	m.browserEntriesPath = msg.path
-	m.browserCue = msg.cue
+	m.browserContainer = msg.container
 	m.browserSelected = msg.selected
 	m.browserOffset = msg.offset
 
@@ -531,6 +539,9 @@ func (m *Model) applyBrowserLoaded(msg browserLoadedMsg) tea.Cmd {
 	if m.statusIsError && m.bookmarkLoadErr == nil {
 		m.setStatusOK("ready")
 	}
+	if msg.skipped > 0 {
+		m.setStatusOK(fmt.Sprintf("playlist: %d item(s), skipped %d", len(msg.entries), msg.skipped))
+	}
 	return m.probeBrowserEntries()
 }
 
@@ -542,20 +553,24 @@ func (m *Model) clearBrowserFilter() {
 	m.browserSearching = false
 }
 
-// descend pushes the current location and loads a child directory or CUE
-// folder.
+// descend pushes the current location and loads a child directory, CUE folder,
+// or playlist folder.
 func (m *Model) descend(entry library.Entry) tea.Cmd {
 	m.browserStack = append(m.browserStack, browserLocation{
-		Path:     m.browserPath,
-		Selected: m.browserSelected,
-		Offset:   m.browserOffset,
-		Cue:      m.browserCue,
+		Path:      m.browserPath,
+		Selected:  m.browserSelected,
+		Offset:    m.browserOffset,
+		Container: m.browserContainer,
 	})
 	m.clearBrowserFilter()
-	if entry.Kind == library.KindCueDir {
-		return m.loadBrowser(entry.Path, true, 0, 0, "")
+	switch entry.Kind {
+	case library.KindCueDir:
+		return m.loadBrowser(entry.Path, library.KindCueDir, 0, 0, "")
+	case library.KindPlaylist:
+		return m.loadBrowser(entry.Path, library.KindPlaylist, 0, 0, "")
+	default:
+		return m.loadBrowser(entry.Path, library.KindDir, 0, 0, "")
 	}
-	return m.loadBrowser(entry.Path, false, 0, 0, "")
 }
 
 // browserBack restores the previous location, selection, and offset. At the
@@ -566,7 +581,7 @@ func (m *Model) browserBack() tea.Cmd {
 		location := m.browserStack[len(m.browserStack)-1]
 		m.browserStack = m.browserStack[:len(m.browserStack)-1]
 		m.clearBrowserFilter()
-		return m.loadBrowser(location.Path, location.Cue, location.Selected, location.Offset, "")
+		return m.loadBrowser(location.Path, location.Container, location.Selected, location.Offset, "")
 	}
 	if m.browserPath == "" {
 		return nil
@@ -576,11 +591,11 @@ func (m *Model) browserBack() tea.Cmd {
 		return nil
 	}
 	focus := library.Entry{Path: m.browserPath}
-	if m.browserCue {
+	if m.browserContainer == library.KindCueDir {
 		focus.CuePath = m.browserPath
 	}
 	m.clearBrowserFilter()
-	return m.loadBrowser(parent, false, 0, 0, entryKey(focus))
+	return m.loadBrowser(parent, library.KindDir, 0, 0, entryKey(focus))
 }
 
 // rescanBrowser reloads the current location while trying to keep the selected
@@ -590,7 +605,7 @@ func (m *Model) rescanBrowser() tea.Cmd {
 	if entry, ok := m.browserSelectedEntry(); ok {
 		focus = entryKey(entry)
 	}
-	return m.loadBrowser(m.browserPath, m.browserCue, m.browserSelected, m.browserOffset, focus)
+	return m.loadBrowser(m.browserPath, m.browserContainer, m.browserSelected, m.browserOffset, focus)
 }
 
 // browserOpen handles Enter at the browser.
@@ -607,7 +622,7 @@ func (m *Model) browserOpen() tea.Cmd {
 	}
 
 	switch entry.Kind {
-	case library.KindDir, library.KindCueDir:
+	case library.KindDir, library.KindCueDir, library.KindPlaylist:
 		return m.descend(entry)
 	case library.KindInvalidCue:
 		message := "invalid CUE"
@@ -616,15 +631,6 @@ func (m *Model) browserOpen() tea.Cmd {
 		}
 		m.setStatusError(message)
 		return nil
-	case library.KindPlaylist:
-		// Stop the previous stream before the asynchronous load replaces the
-		// queue. The stop is serialized with any Play already in flight.
-		stop := m.stopPlayback()
-		play := m.playPlaylist(entry.Path)
-		if stop == nil {
-			return play
-		}
-		return tea.Batch(stop, play)
 	case library.KindAudio, library.KindCueTrack:
 		return m.playLevel(entry)
 	default:
@@ -640,7 +646,7 @@ func (m *Model) playLevel(entry library.Entry) tea.Cmd {
 	seq := m.beginPlaybackIntent()
 	scanner := m.scanner
 	entries := append([]library.Entry(nil), m.browserEntries...)
-	cue := m.browserCue
+	cue := m.browserContainer == library.KindCueDir
 	selected := indexOfEntry(entries, entry)
 
 	return func() tea.Msg {
@@ -719,10 +725,14 @@ func (m *Model) addSelected() tea.Cmd {
 
 // addAll handles `A`: the whole current location, recursively.
 func (m *Model) addAll() tea.Cmd {
-	if m.browserCue {
+	switch m.browserContainer {
+	case library.KindCueDir:
 		return m.readCueAdd(m.browserPath)
+	case library.KindPlaylist:
+		return m.playlistAdd(m.browserPath)
+	default:
+		return m.walkAdd(m.browserPath)
 	}
-	return m.walkAdd(m.browserPath)
 }
 
 // walkAdd recursively expands a directory through Scanner.Walk.
@@ -1104,16 +1114,16 @@ func queueItemFromEntry(entry library.Entry) queue.Item {
 	}
 }
 
-// loadPlaylistItems loads and expands a playlist into playable queue items.
+// loadPlaylistEntries loads and expands a playlist into browser entries.
 // Unresolvable CUE references fall back to the whole-file playlist entry and
 // missing audio files are skipped and counted.
-func loadPlaylistItems(ctx context.Context, scanner Scanner, path string) ([]queue.Item, int, error) {
+func loadPlaylistEntries(ctx context.Context, scanner Scanner, path string) ([]library.Entry, int, error) {
 	entries, err := playlist.Load(path)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	items := make([]queue.Item, 0, len(entries))
+	out := make([]library.Entry, 0, len(entries))
 	skipped := 0
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -1124,7 +1134,49 @@ func loadPlaylistItems(ctx context.Context, scanner Scanner, path string) ([]que
 			skipped++
 			continue
 		}
-		items = append(items, item)
+		out = append(out, libraryEntryFromQueueItem(item))
+	}
+	return out, skipped, nil
+}
+
+// libraryEntryFromQueueItem converts a loaded playlist item back into a browser
+// entry. CUE tracks keep their sheet identity and a track-number prefix so the
+// folder reads like a CUE album.
+func libraryEntryFromQueueItem(item queue.Item) library.Entry {
+	entry := library.Entry{
+		Path:     item.Path,
+		CuePath:  item.CuePath,
+		TrackNo:  item.CueTrack,
+		Start:    item.Start,
+		Duration: item.Duration,
+		Meta: meta.Info{
+			Title:    item.Title,
+			Artist:   item.Artist,
+			Album:    item.Album,
+			TrackNo:  item.TrackNo,
+			Duration: item.Duration,
+		},
+	}
+	if item.CuePath != "" {
+		entry.Kind = library.KindCueTrack
+		entry.Name = fmt.Sprintf("%02d. %s", item.CueTrack, displayTitle(item))
+		return entry
+	}
+	entry.Kind = library.KindAudio
+	entry.Name = displayTitle(item)
+	return entry
+}
+
+// loadPlaylistItems loads and expands a playlist into playable queue items.
+// It shares the browser folder loader so display and queue addition agree.
+func loadPlaylistItems(ctx context.Context, scanner Scanner, path string) ([]queue.Item, int, error) {
+	entries, skipped, err := loadPlaylistEntries(ctx, scanner, path)
+	if err != nil {
+		return nil, 0, err
+	}
+	items := make([]queue.Item, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, queueItemFromEntry(entry))
 	}
 	return items, skipped, nil
 }

@@ -304,7 +304,7 @@ func TestBrowserPreviewIgnoresNonTracks(t *testing.T) {
 	entries := []library.Entry{
 		{Kind: library.KindDir, Name: "Album", Path: "/music/Album"},
 		{Kind: library.KindCueDir, Name: "Cue.cue/", Path: "/music/Cue.cue", CuePath: "/music/Cue.cue"},
-		{Kind: library.KindPlaylist, Name: "list.m3u", Path: "/music/list.m3u"},
+		{Kind: library.KindPlaylist, Name: "list.m3u/", Path: "/music/list.m3u"},
 		{Kind: library.KindInvalidCue, Name: "Bad.cue", Path: "/music/Bad.cue", Err: errors.New("bad")},
 	}
 	for _, entry := range entries {

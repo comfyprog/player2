@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"player2/internal/library"
 	"player2/internal/playlist"
 )
 
@@ -107,7 +108,7 @@ func (m *Model) openNamePrompt() tea.Cmd {
 // against: the CUE file's directory, a selected file's directory, or the
 // browser directory itself.
 func (m *Model) saveDirectory() string {
-	if m.browserCue {
+	if m.browserContainer == library.KindCueDir || m.browserContainer == library.KindPlaylist {
 		return filepath.Dir(m.browserPath)
 	}
 	if info, err := os.Stat(m.browserPath); err == nil && !info.IsDir() {

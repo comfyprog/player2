@@ -113,14 +113,14 @@ func TestSaveDirectoryUsesBrowserFileDirectory(t *testing.T) {
 	m, _ := newSaveModel(t, dir)
 
 	m.browserPath = file
-	m.browserCue = false
+	m.browserContainer = library.KindDir
 	if got := m.saveDirectory(); got != dir {
 		t.Errorf("saveDirectory for a file = %q, want %q", got, dir)
 	}
 
 	cuePath := filepath.Join(dir, "album.cue")
 	m.browserPath = cuePath
-	m.browserCue = true
+	m.browserContainer = library.KindCueDir
 	if got := m.saveDirectory(); got != dir {
 		t.Errorf("saveDirectory for a CUE file = %q, want %q", got, dir)
 	}
@@ -462,35 +462,15 @@ func TestConfirmSwallowsOtherKeys(t *testing.T) {
 	}
 }
 
-func TestBrowserEnterPlaylistStopsBeforeLoading(t *testing.T) {
+func TestSavePromptUsesPlaylistParentDirectory(t *testing.T) {
 	dir := t.TempDir()
-	audio := writeTestFile(t, dir, "one.flac", "")
-	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\n#EXTINF:60,Artist - Song\none.flac\n")
-	sc := &testScanner{}
-	m, fp := newBrowserModel(t, sc)
-	m.browserEntries = []library.Entry{{
-		Kind: library.KindPlaylist, Name: "list.m3u", Path: playlistPath,
-	}}
+	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\n")
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserPath = playlistPath
+	m.browserContainer = library.KindPlaylist
 
-	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
-	if cmd == nil {
-		t.Fatal("opening a playlist returned no command")
-	}
-	// Stop is serialized and runs as a command rather than inside Update.
-	m = applyBrowserFollow(t, m, cmd)
-	if fp.stops != 1 {
-		t.Errorf("stops = %d when opening a playlist, want 1", fp.stops)
-	}
-
-	items := m.queue.Snapshot().Items
-	if len(items) != 1 || items[0].Path != audio {
-		t.Fatalf("queue items = %#v, want the playlist item", items)
-	}
-	if len(fp.played) != 1 || fp.played[0].Path != audio {
-		t.Errorf("played = %#v, want the first playlist item", fp.played)
-	}
-	if !strings.Contains(m.statusMsg, "playing 1 item(s)") {
-		t.Errorf("status = %q, want playing status", m.statusMsg)
+	if got := m.saveDirectory(); got != filepath.Dir(playlistPath) {
+		t.Errorf("saveDirectory inside a playlist folder = %q, want %q", got, filepath.Dir(playlistPath))
 	}
 }
 

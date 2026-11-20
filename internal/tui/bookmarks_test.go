@@ -72,7 +72,7 @@ func TestAddBookmarkRejectsCueFolder(t *testing.T) {
 		opts.BookmarkStore = bookmarks
 	})
 	m = resize(t, m, 100, 30)
-	m.browserCue = true
+	m.browserContainer = library.KindCueDir
 	m.browserEntriesPath = "/music/Album.cue"
 
 	m, cmd := pressForCmd(t, m, runeKey('f'))
@@ -84,6 +84,29 @@ func TestAddBookmarkRejectsCueFolder(t *testing.T) {
 	}
 	if !m.statusIsError || !strings.Contains(m.statusMsg, "CUE") {
 		t.Errorf("status = %q (error=%v), want a CUE error", m.statusMsg, m.statusIsError)
+	}
+}
+
+func TestAddBookmarkRejectsPlaylistFolder(t *testing.T) {
+	bookmarks := &fakeBookmarkStore{}
+	m := newTestModel(t, func(opts *Options) {
+		opts.Scanner = &testScanner{}
+		opts.StartDir = "/music/list.m3u"
+		opts.BookmarkStore = bookmarks
+	})
+	m = resize(t, m, 100, 30)
+	m.browserContainer = library.KindPlaylist
+	m.browserEntriesPath = "/music/list.m3u"
+
+	m, cmd := pressForCmd(t, m, runeKey('f'))
+	if cmd != nil {
+		t.Fatalf("playlist add returned a command, want nil")
+	}
+	if len(m.bookmarks) != 0 {
+		t.Errorf("bookmarks = %v, want empty", m.bookmarks)
+	}
+	if !m.statusIsError || !strings.Contains(m.statusMsg, "playlist") {
+		t.Errorf("status = %q (error=%v), want a playlist error", m.statusMsg, m.statusIsError)
 	}
 }
 
@@ -518,7 +541,7 @@ func TestLoadBrowserLeavesBookmarkView(t *testing.T) {
 	m = resize(t, m, 100, 30)
 	m.showBookmarks()
 
-	m.loadBrowser("/music", false, 0, 0, "")
+	m.loadBrowser("/music", library.KindDir, 0, 0, "")
 	if m.browserBookmarks {
 		t.Error("loadBrowser left the bookmark view open")
 	}

@@ -46,10 +46,10 @@ const (
 
 // browserLocation is a saved browser position used by the navigation stack.
 type browserLocation struct {
-	Path     string
-	Selected int
-	Offset   int
-	Cue      bool
+	Path      string
+	Selected  int
+	Offset    int
+	Container library.Kind
 }
 
 // playlistTab is one independent playlist slot. selected and offset preserve
@@ -126,7 +126,7 @@ type Model struct {
 	browserFilter      string
 	browserSearching   bool
 	browserLoading     bool
-	browserCue         bool
+	browserContainer   library.Kind
 	browserGen         uint64
 	browserShowTags    bool
 	browserMeta        map[string]meta.Info
@@ -305,7 +305,7 @@ func (m *Model) Err() error { return m.startupErr }
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.tick()}
 	if m.scanner != nil {
-		cmds = append(cmds, m.loadBrowser(m.browserPath, m.browserCue, 0, 0, ""))
+		cmds = append(cmds, m.loadBrowser(m.browserPath, m.browserContainer, 0, 0, ""))
 	}
 	if m.cfg.RestoreQueue && m.store != nil {
 		cmds = append(cmds, m.restoreCmd())
