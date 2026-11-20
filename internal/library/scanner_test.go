@@ -138,18 +138,18 @@ func TestReadDirBasic(t *testing.T) {
 		t.Fatalf("ReadDir: %v", err)
 	}
 
-	assertNames(t, entries, "Sub", "list.m3u", "mix.M3U8", "other.mp3", "Song.FLAC")
-	if entries[0].Kind != KindDir || entries[0].Path != filepath.Join(dir, "Sub") {
-		t.Errorf("Sub entry = %+v, want KindDir with absolute path", entries[0])
+	assertNames(t, entries, "list.m3u/", "mix.M3U8/", "Sub", "other.mp3", "Song.FLAC")
+	if got := findEntry(t, entries, "Sub"); got.Kind != KindDir || got.Path != filepath.Join(dir, "Sub") {
+		t.Errorf("Sub entry = %+v, want KindDir with absolute path", got)
 	}
 	if got := findEntry(t, entries, "Song.FLAC"); got.Kind != KindAudio || got.Path != filepath.Join(dir, "Song.FLAC") {
 		t.Errorf("Song.FLAC = %+v, want KindAudio with absolute path", got)
 	}
-	if got := findEntry(t, entries, "list.m3u"); got.Kind != KindPlaylist {
-		t.Errorf("list.m3u kind = %v, want KindPlaylist", got.Kind)
+	if got := findEntry(t, entries, "list.m3u/"); got.Kind != KindPlaylist || got.Path != filepath.Join(dir, "list.m3u") {
+		t.Errorf("list.m3u/ = %+v, want KindPlaylist at the playlist path", got)
 	}
-	if got := findEntry(t, entries, "mix.M3U8"); got.Kind != KindPlaylist {
-		t.Errorf("mix.M3U8 kind = %v, want KindPlaylist", got.Kind)
+	if got := findEntry(t, entries, "mix.M3U8/"); got.Kind != KindPlaylist || got.Path != filepath.Join(dir, "mix.M3U8") {
+		t.Errorf("mix.M3U8/ = %+v, want KindPlaylist at the playlist path", got)
 	}
 	if calls := prober.probed(); len(calls) != 0 {
 		t.Errorf("prober called for plain audio: %v", calls)
@@ -166,7 +166,7 @@ func TestReadDirNoAudioExtensions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	assertNames(t, entries, "list.m3u")
+	assertNames(t, entries, "list.m3u/")
 }
 
 func TestReadDirNaturalSort(t *testing.T) {
@@ -193,13 +193,65 @@ FILE "z.flac" WAVE
 	}
 
 	assertNames(t, entries,
-		"A", "b", "Zebra.cue/",
-		"list2.m3u", "List10.m3u",
+		"A", "b", "list2.m3u/", "List10.m3u/", "Zebra.cue/",
 		"track01.flac", "Track2.flac", "track10.flac",
 	)
 	got := findEntry(t, entries, "Zebra.cue/")
 	if got.Kind != KindCueDir || got.Path != cuePath || got.CuePath != cuePath {
 		t.Errorf("Zebra.cue/ = %+v, want valid KindCueDir", got)
+	}
+}
+
+func TestReadDirPlaylistDoesNotHideAudio(t *testing.T) {
+	dir := t.TempDir()
+	audio := writeFile(t, dir, "song.flac")
+	playlistPath := filepath.Join(dir, "list.m3u")
+	if err := os.WriteFile(playlistPath, []byte("#EXTM3U\nsong.flac\n"), 0o644); err != nil {
+		t.Fatalf("write playlist: %v", err)
+	}
+
+	s := New(Options{AudioExtensions: []string{"flac"}}, newFakeProber())
+	entries, err := s.ReadDir(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+
+	// Playlist folders are virtual containers and must not hide the audio they
+	// reference, unlike a valid CUE sheet.
+	assertNames(t, entries, "list.m3u/", "song.flac")
+
+	playlist := findEntry(t, entries, "list.m3u/")
+	if playlist.Kind != KindPlaylist {
+		t.Errorf("playlist Kind = %v, want KindPlaylist", playlist.Kind)
+	}
+	if playlist.Path != playlistPath {
+		t.Errorf("playlist Path = %q, want %q", playlist.Path, playlistPath)
+	}
+
+	song := findEntry(t, entries, "song.flac")
+	if song.Kind != KindAudio || song.Path != audio {
+		t.Errorf("song.flac = %+v, want visible KindAudio at %q", song, audio)
+	}
+}
+
+func TestWalkSkipsPlaylistFolders(t *testing.T) {
+	dir := t.TempDir()
+	audio := writeFile(t, dir, "song.flac")
+	if err := os.WriteFile(filepath.Join(dir, "list.m3u"), []byte("#EXTM3U\nsong.flac\n"), 0o644); err != nil {
+		t.Fatalf("write playlist: %v", err)
+	}
+
+	s := New(Options{AudioExtensions: []string{"flac"}}, newFakeProber())
+	entries, err := s.Walk(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("len(entries) = %d (%#v), want only the audio file", len(entries), entryNames(entries))
+	}
+	if entries[0].Kind != KindAudio || entries[0].Path != audio {
+		t.Errorf("entry = %+v, want the KindAudio at %q", entries[0], audio)
 	}
 }
 

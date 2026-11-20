@@ -14,8 +14,11 @@ import (
 // Kind identifies what an Entry represents.
 type Kind int
 
-// Entry kinds. Directories and CUE folders are containers; audio, CUE tracks,
-// and playlists are playable or loadable entries.
+// Entry kinds. Directories, CUE folders, and playlist folders are containers;
+// audio and CUE tracks are playable entries, and invalid CUEs stay visible as
+// errors. A KindPlaylist entry is a virtual folder named "<file>/" whose Path is
+// the .m3u/.m3u8 file itself; playlist folders do not hide the audio they
+// reference.
 const (
 	KindDir Kind = iota
 	KindAudio

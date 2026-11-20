@@ -40,9 +40,11 @@ func New(opts Options, prober meta.Prober) *Scanner {
 // are skipped unless FollowSymlinks is set; symlinked regular files are
 // included when their target resolves. A valid CUE becomes a KindCueDir
 // virtual folder and the same-directory audio files it references are hidden.
-// An invalid CUE becomes KindInvalidCue and hides nothing. Individual
-// unreadable or unparsable CUEs never fail the whole directory; only an
-// unreadable directory itself returns an error.
+// An invalid CUE becomes KindInvalidCue and hides nothing. A .m3u/.m3u8 file
+// becomes a KindPlaylist virtual folder whose Path is the playlist file; unlike
+// CUE folders, playlist folders do not hide the audio they reference.
+// Individual unreadable or unparsable CUEs never fail the whole directory; only
+// an unreadable directory itself returns an error.
 func (s *Scanner) ReadDir(ctx context.Context, dir string) ([]Entry, error) {
 	ctx = ensureContext(ctx)
 	if err := ctx.Err(); err != nil {
@@ -112,7 +114,7 @@ func (s *Scanner) ReadDir(ctx context.Context, dir string) ([]Entry, error) {
 		case s.audioExts[ext]:
 			audio = append(audio, Entry{Kind: KindAudio, Name: name, Path: path})
 		case ext == ".m3u" || ext == ".m3u8":
-			entries = append(entries, Entry{Kind: KindPlaylist, Name: name, Path: path})
+			entries = append(entries, Entry{Kind: KindPlaylist, Name: name + "/", Path: path})
 		case ext == ".cue":
 			sheet, err := s.validateCue(ctx, path)
 			if err != nil {
@@ -185,8 +187,9 @@ func (s *Scanner) ReadCue(ctx context.Context, cuePath string) ([]Entry, error) 
 }
 
 // Walk recursively scans dir and returns playable entries only: KindAudio and
-// KindCueTrack. Containers (directories, CUE folders, playlists, invalid CUEs)
-// are not returned; valid CUE folders expand into their tracks.
+// KindCueTrack. Containers (directories, CUE folders, playlist folders, invalid
+// CUEs) are not returned; valid CUE folders expand into their tracks, while
+// playlist folders are never expanded or descended into.
 //
 // Walk skips unreadable subdirectories so one bad folder cannot abort the whole
 // walk, and it skips symlink cycles using resolved real paths. An unreadable or
@@ -415,8 +418,9 @@ func normalizeExtensions(exts []string) map[string]bool {
 	return normalized
 }
 
-// sortEntries orders CUE folders and directories first, then files, using a
-// natural case-insensitive comparison. Path is a deterministic tie-break.
+// sortEntries orders virtual containers and directories first, then files,
+// using a natural case-insensitive comparison. Path is a deterministic
+// tie-break.
 func sortEntries(entries []Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
@@ -438,7 +442,7 @@ func sortEntries(entries []Entry) {
 }
 
 func sortGroup(kind Kind) int {
-	if kind == KindDir || kind == KindCueDir {
+	if kind == KindDir || kind == KindCueDir || kind == KindPlaylist {
 		return 0
 	}
 	return 1
