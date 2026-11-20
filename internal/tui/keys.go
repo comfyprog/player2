@@ -132,7 +132,7 @@ var actionDescriptions = map[Action]string{
 	ActionTab8:          "Switch to tab 8",
 	ActionTab9:          "Switch to tab 9",
 	ActionToggleZoom:    "Zoom active pane",
-	ActionOpen:          "Open/play",
+	ActionOpen:          "Open/preview",
 	ActionPreview:       "Preview track",
 	ActionParent:        "Parent directory",
 	ActionUp:            "Move up",

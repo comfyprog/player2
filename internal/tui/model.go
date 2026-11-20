@@ -203,8 +203,8 @@ type Model struct {
 	// preview is one-off playback of a browser track outside the queue.
 	// previewSeq hands out IDs from the top of the uint64 range so a preview
 	// item cannot collide with a queue item. playSeq identifies the latest
-	// playback intent so an older asynchronous level/playlist build cannot
-	// replace a newer preview or transport request.
+	// playback intent so older asynchronous playback work cannot overwrite a
+	// newer request.
 	previewActive bool
 	previewItem   queue.Item
 	previewSeq    uint64
@@ -351,9 +351,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case browserMetadataMsg:
 		return m, m.applyBrowserMetadata(msg)
-
-	case browserPlayMsg:
-		return m, m.applyBrowserPlay(msg)
 
 	case browserAddMsg:
 		return m, m.applyBrowserAdd(msg)

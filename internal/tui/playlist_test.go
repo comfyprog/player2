@@ -522,28 +522,6 @@ func TestPlaylistGotoPlayingClearsFilterHidingCurrent(t *testing.T) {
 	}
 }
 
-func TestPlaylistQueueReplacementClearsFilter(t *testing.T) {
-	m, _ := newPlaylistModel(t, nil)
-	m.queue.Append(playlistItem("Alpha", "", 1, time.Minute))
-	m.playlistFilter = "al"
-	m.playlistSearch = "al"
-
-	m.applyBrowserPlay(browserPlayMsg{
-		gen:      m.browserGen,
-		seq:      m.playSeq,
-		items:    []queue.Item{playlistItem("Beta", "", 1, time.Minute)},
-		selected: 0,
-		status:   "playing 1 item(s)",
-	})
-
-	if m.playlistFilter != "" || m.playlistSearch != "" {
-		t.Errorf("filter after queue replacement = %q/%q, want cleared", m.playlistFilter, m.playlistSearch)
-	}
-	if m.playlistSelected != 0 {
-		t.Errorf("selection after queue replacement = %d, want 0", m.playlistSelected)
-	}
-}
-
 func TestPlaylistRestoreClearsFilter(t *testing.T) {
 	store := &fakeStore{snapshot: queue.Snapshot{
 		Items: []queue.Item{
@@ -1783,88 +1761,6 @@ func TestBrowserAppendSchedulesProbes(t *testing.T) {
 	}
 	if got := m.queue.Snapshot().Items[0].Title; got != "Probed" {
 		t.Errorf("appended item title = %q, want Probed", got)
-	}
-}
-
-func TestBrowserPlaySchedulesQueueWorkBeforePlayCompletes(t *testing.T) {
-	prober := &fakeProber{info: map[string]meta.Info{
-		"/music/song.mp3": {Title: "Probed", Duration: time.Minute},
-	}}
-	player := newControlledPlayer()
-	store := &fakeStore{}
-	m := newTestModel(t, func(opts *Options) {
-		opts.Player = player
-		opts.Store = store
-		opts.Prober = prober
-		opts.StartDir = "/music"
-	})
-	m = resize(t, m, 100, 30)
-
-	cmd := m.applyBrowserPlay(browserPlayMsg{
-		gen:      m.browserGen,
-		items:    []queue.Item{{Path: "/music/song.mp3", Title: "song"}},
-		selected: 0,
-		status:   "playing 1 item(s)",
-	})
-	if cmd == nil {
-		t.Fatal("browser play returned no command")
-	}
-
-	msgs := make(chan tea.Msg, 32)
-	runAsyncCmd(cmd, msgs)
-	select {
-	case <-player.started:
-	case <-time.After(time.Second):
-		t.Fatal("Play did not start")
-	}
-
-	// Play is blocked on release here: probing and saving must already have run.
-	deadline := time.After(2 * time.Second)
-	seenProbe, seenSave := false, false
-	for !seenProbe || !seenSave {
-		select {
-		case msg := <-msgs:
-			switch msg.(type) {
-			case queueMetadataMsg:
-				seenProbe = true
-			case queueSavedMsg:
-				seenSave = true
-			}
-			next, follow := m.Update(msg)
-			m = next.(*Model)
-			if follow != nil {
-				runAsyncCmd(follow, msgs)
-			}
-		case <-deadline:
-			t.Fatalf("queue work waited for Play: probe=%v save=%v", seenProbe, seenSave)
-		}
-	}
-	if len(player.played) != 0 {
-		t.Fatal("Play completed before the queue work")
-	}
-
-	close(player.release)
-	deadline = time.After(2 * time.Second)
-	for {
-		select {
-		case msg := <-msgs:
-			next, follow := m.Update(msg)
-			m = next.(*Model)
-			if follow != nil {
-				runAsyncCmd(follow, msgs)
-			}
-			if _, ok := msg.(transportResultMsg); ok {
-				if m.statusIsError {
-					t.Errorf("statusIsError = true after successful play: %q", m.statusMsg)
-				}
-				if !strings.Contains(m.statusMsg, "playing") {
-					t.Errorf("statusMsg = %q, want playing status", m.statusMsg)
-				}
-				return
-			}
-		case <-deadline:
-			t.Fatal("Play result was not delivered")
-		}
 	}
 }
 

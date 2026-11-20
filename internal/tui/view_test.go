@@ -38,7 +38,7 @@ func TestViewSmoke(t *testing.T) {
 		"? help",
 		"i info",
 		"tab pane",
-		"enter play",
+		"enter open",
 		"a add",
 		"space pause",
 		"/ search",
@@ -182,7 +182,7 @@ func TestViewHelpToggle(t *testing.T) {
 		t.Fatal("help flag not set after ?")
 	}
 	plain := ansi.Strip(m.View().Content)
-	for _, want := range []string{"Keys", "Quit", "Switch pane", "Zoom active pane", "Preview track", "Bookmark directory", "Show bookmarks", "Track info", "Save playlist", "Name tab", "Go to playing"} {
+	for _, want := range []string{"Keys", "Quit", "Switch pane", "Zoom active pane", "Open/preview", "Preview track", "Bookmark directory", "Show bookmarks", "Track info", "Save playlist", "Name tab", "Go to playing"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("help overlay missing %q\n%s", want, plain)
 		}

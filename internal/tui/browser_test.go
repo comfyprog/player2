@@ -629,6 +629,13 @@ func TestBrowserIgnoresStaleTagProbeResults(t *testing.T) {
 func TestBrowserEnterInvalidCueShowsErrorAndDoesNotPlay(t *testing.T) {
 	sc := &testScanner{}
 	m, fp := newBrowserModel(t, sc)
+	m.queue.Append(
+		playlistItem("Queued", "Artist", 1, time.Minute),
+		playlistItem("Next", "Artist", 2, time.Minute),
+	)
+	m.queue.SetCurrent(0)
+	before := m.queue.Snapshot()
+	store := m.store.(*fakeStore)
 	m.browserEntries = []library.Entry{{
 		Kind: library.KindInvalidCue,
 		Name: "Broken.cue",
@@ -649,67 +656,65 @@ func TestBrowserEnterInvalidCueShowsErrorAndDoesNotPlay(t *testing.T) {
 	if len(fp.played) != 0 {
 		t.Errorf("player played %d items, want none", len(fp.played))
 	}
+	if after := m.queue.Snapshot(); !snapshotsEqual(before, after) {
+		t.Errorf("invalid CUE changed the queue:\n before %+v\n after  %+v", before, after)
+	}
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("queue saves = %d, want 0", got)
+	}
 }
 
-func TestBrowserEnterAudioQueuesLevelAndPlaysSelection(t *testing.T) {
-	cuePath := "/music/Album.cue"
-	tracks := []library.Entry{
-		cueTrackEntry("One", "/music/song.flac", cuePath, 1, 0, 2*time.Minute),
-		cueTrackEntry("Two", "/music/song.flac", cuePath, 2, 2*time.Minute, 90*time.Second),
+func TestBrowserEnterAudioPreviewsWithoutChangingQueue(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.queue.Append(
+		playlistItem("Queued", "Artist", 1, time.Minute),
+		playlistItem("Next", "Artist", 2, time.Minute),
+	)
+	m.queue.SetCurrent(0)
+	before := m.queue.Snapshot()
+	store := m.store.(*fakeStore)
+	m.browserEntries = []library.Entry{
+		audioEntry("first.flac", "/music/first.flac"),
+		audioEntry("second.flac", "/music/second.flac"),
 	}
-	entries := []library.Entry{
-		audioEntry("a.flac", "/music/a.flac"),
-		{Kind: library.KindCueDir, Name: "Album.cue/", Path: cuePath, CuePath: cuePath},
-		audioEntry("b.flac", "/music/b.flac"),
-		{Kind: library.KindInvalidCue, Name: "Bad.cue", Path: "/music/Bad.cue", Err: errors.New("bad")},
-		{Kind: library.KindPlaylist, Name: "list.m3u/", Path: "/music/list.m3u"},
-	}
-	entries[0].Duration = time.Minute
-	entries[2].Duration = 2 * time.Minute
-	sc := &testScanner{cues: map[string][]library.Entry{cuePath: tracks}}
-	m, fp := newBrowserModel(t, sc)
-	m.browserEntries = entries
-	m.browserSelected = 2
+	m.browserSelected = 1
 
 	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
 	m = applyBrowserCmd(t, m, cmd)
 
-	snapshot := m.queue.Snapshot()
-	if len(snapshot.Items) != 4 {
-		t.Fatalf("queue length = %d, want 4: %#v", len(snapshot.Items), snapshot.Items)
+	if after := m.queue.Snapshot(); !snapshotsEqual(before, after) {
+		t.Errorf("Enter changed the queue:\n before %+v\n after  %+v", before, after)
 	}
-	wantTitles := []string{"a", "One", "Two", "b"}
-	for i, want := range wantTitles {
-		if got := snapshot.Items[i].Title; got != want {
-			t.Errorf("item %d title = %q, want %q", i, got, want)
-		}
-	}
-	if got := snapshot.Items[1].Duration; got != 2*time.Minute {
-		t.Errorf("CUE track duration = %v, want 2m", got)
-	}
-	if got := snapshot.Items[2].Duration; got != 90*time.Second {
-		t.Errorf("second CUE track duration = %v, want 90s", got)
-	}
-	if snapshot.Current != 3 {
-		t.Errorf("queue current = %d, want 3 (selected audio b)", snapshot.Current)
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("queue saves = %d, want 0", got)
 	}
 	if len(fp.played) != 1 {
-		t.Fatalf("player played %d items, want 1", len(fp.played))
+		t.Fatalf("Play calls = %d, want 1", len(fp.played))
 	}
-	if fp.played[0].Path != "/music/b.flac" {
-		t.Errorf("played path = %q, want /music/b.flac", fp.played[0].Path)
+	if got := fp.played[0].Path; got != "/music/second.flac" {
+		t.Errorf("played path = %q, want /music/second.flac", got)
+	}
+	if !m.previewActive {
+		t.Error("previewActive = false, want true")
+	}
+	if !strings.Contains(m.statusMsg, "previewing") {
+		t.Errorf("statusMsg = %q, want previewing", m.statusMsg)
 	}
 }
 
-func TestBrowserEnterCueTrackQueuesWholeCueFolder(t *testing.T) {
+func TestBrowserEnterCueTrackPreviewsCueTrack(t *testing.T) {
 	cuePath := "/music/Album.cue"
 	tracks := []library.Entry{
 		cueTrackEntry("One", "/music/song.flac", cuePath, 1, 0, time.Minute),
-		cueTrackEntry("Two", "/music/song.flac", cuePath, 2, time.Minute, time.Minute),
+		cueTrackEntry("Two", "/music/song.flac", cuePath, 2, time.Minute, 90*time.Second),
 		cueTrackEntry("Three", "/music/song.flac", cuePath, 3, 2*time.Minute, time.Minute),
 	}
 	sc := &testScanner{cues: map[string][]library.Entry{cuePath: tracks}}
 	m, fp := newBrowserModel(t, sc)
+	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))
+	m.queue.SetCurrent(0)
+	before := m.queue.Snapshot()
+	store := m.store.(*fakeStore)
 	m.browserPath = cuePath
 	m.browserContainer = library.KindCueDir
 	m.browserEntries = tracks
@@ -718,18 +723,24 @@ func TestBrowserEnterCueTrackQueuesWholeCueFolder(t *testing.T) {
 	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
 	m = applyBrowserCmd(t, m, cmd)
 
-	snapshot := m.queue.Snapshot()
-	if len(snapshot.Items) != 3 {
-		t.Fatalf("queue length = %d, want 3", len(snapshot.Items))
+	if len(fp.played) != 1 {
+		t.Fatalf("Play calls = %d, want 1", len(fp.played))
 	}
-	if snapshot.Current != 1 {
-		t.Errorf("queue current = %d, want 1", snapshot.Current)
+	got := fp.played[0]
+	if got.CueTrack != 2 {
+		t.Errorf("played CUE track = %d, want 2", got.CueTrack)
 	}
-	if len(fp.played) != 1 || fp.played[0].CueTrack != 2 {
-		t.Fatalf("played = %#v, want CUE track 2", fp.played)
+	if got.CuePath != cuePath {
+		t.Errorf("played cue path = %q, want %q", got.CuePath, cuePath)
 	}
-	if fp.played[0].CuePath != cuePath {
-		t.Errorf("played cue path = %q, want %q", fp.played[0].CuePath, cuePath)
+	if got.Start != time.Minute || got.Duration != 90*time.Second {
+		t.Errorf("played range = %v+%v, want 1m+90s", got.Start, got.Duration)
+	}
+	if after := m.queue.Snapshot(); !snapshotsEqual(before, after) {
+		t.Errorf("CUE preview changed the queue:\n before %+v\n after  %+v", before, after)
+	}
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("queue saves = %d, want 0", got)
 	}
 }
 
@@ -1087,12 +1098,16 @@ func TestBrowserPlaylistFolderNavigation(t *testing.T) {
 	writeTestFile(t, dir, "one.flac", "")
 	playlistPath := writeTestFile(t, dir, "list.m3u", "#EXTM3U\n#EXTINF:60,Artist - One\none.flac\n")
 	sc := &testScanner{dirs: map[string][]library.Entry{
-		dir: {{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath}},
+		dir: {
+			audioEntry("intro.flac", filepath.Join(dir, "intro.flac")),
+			{Kind: library.KindPlaylist, Name: "list.m3u/", Path: playlistPath},
+		},
 	}}
 	m, _ := newBrowserModel(t, sc)
 	m.browserPath = dir
 	m.browserEntriesPath = dir
 	m.browserEntries = sc.dirs[dir]
+	m.browserSelected = 1
 	queueBefore := m.queue.Snapshot()
 
 	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
@@ -1129,11 +1144,11 @@ func TestBrowserPlaylistFolderNavigation(t *testing.T) {
 	if m.browserPath != dir {
 		t.Errorf("browserPath after back = %q, want %q", m.browserPath, dir)
 	}
-	if len(m.browserEntries) != 1 || m.browserEntries[0].Kind != library.KindPlaylist {
+	if len(m.browserEntries) != 2 || m.browserEntries[1].Kind != library.KindPlaylist {
 		t.Fatalf("parent entries = %#v, want the playlist row", m.browserEntries)
 	}
-	if m.browserSelected != 0 {
-		t.Errorf("browserSelected after back = %d, want 0 (playlist row)", m.browserSelected)
+	if m.browserSelected != 1 {
+		t.Errorf("browserSelected after back = %d, want 1 (playlist row)", m.browserSelected)
 	}
 }
 
@@ -1427,111 +1442,57 @@ func TestBrowserActionsIgnoredWhileLoading(t *testing.T) {
 	}
 }
 
-func TestBrowserPlayRunsInCommand(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		bp := newControlledPlayer()
-		m := newBrowserModelWithPlayer(t, &testScanner{}, bp)
-		m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
+func TestBrowserPreviewRunsInCommand(t *testing.T) {
+	bp := newControlledPlayer()
+	m := newBrowserModelWithPlayer(t, &testScanner{}, bp)
+	m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
 
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
-		if cmd == nil {
-			t.Fatal("Enter returned no build command")
-		}
-		next, playCmd := m.Update(cmd())
-		m = next.(*Model)
-		if playCmd == nil {
-			t.Fatal("browserPlayMsg returned no Play command")
-		}
-		if bp.calls != 0 {
-			t.Fatalf("Play called %d times inside Update, want 0", bp.calls)
-		}
-		if got := len(m.queue.Snapshot().Items); got != 1 {
-			t.Fatalf("queue length = %d before Play command, want 1", got)
-		}
+	m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("Enter returned no preview command")
+	}
+	if bp.calls != 0 {
+		t.Fatalf("Play called %d times inside Update, want 0", bp.calls)
+	}
 
-		result := make(chan tea.Msg, 16)
-		runAsyncCmd(playCmd, result)
+	result := make(chan tea.Msg, 16)
+	runAsyncCmd(cmd, result)
+	select {
+	case <-bp.started:
+	case <-time.After(time.Second):
+		t.Fatal("preview command did not call Play")
+	}
+	close(bp.release)
+
+	deadline := time.After(2 * time.Second)
+	seenResult := false
+	for !seenResult {
 		select {
-		case <-bp.started:
-		case <-time.After(time.Second):
-			t.Fatal("Play command did not call Play")
-		}
-		close(bp.release)
-
-		deadline := time.After(2 * time.Second)
-		seenResult := false
-		for !seenResult {
-			select {
-			case msg := <-result:
-				if _, ok := msg.(transportResultMsg); ok {
-					seenResult = true
-				}
-				next, follow := m.Update(msg)
-				m = next.(*Model)
-				if follow != nil {
-					runAsyncCmd(follow, result)
-				}
-			case <-deadline:
-				t.Fatal("Play command did not return")
+		case msg := <-result:
+			if _, ok := msg.(transportResultMsg); ok {
+				seenResult = true
 			}
-		}
-		if bp.calls != 1 {
-			t.Errorf("Play calls = %d, want 1", bp.calls)
-		}
-		if m.statusIsError {
-			t.Errorf("statusIsError = true after successful play: %q", m.statusMsg)
-		}
-		if !strings.Contains(m.statusMsg, "playing") {
-			t.Errorf("statusMsg = %q, want playing status", m.statusMsg)
-		}
-	})
-
-	t.Run("failure", func(t *testing.T) {
-		bp := newControlledPlayer()
-		bp.playErr = errors.New("decoder failed")
-		m := newBrowserModelWithPlayer(t, &testScanner{}, bp)
-		m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
-
-		m, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
-		next, playCmd := m.Update(cmd())
-		m = next.(*Model)
-		if playCmd == nil {
-			t.Fatal("browserPlayMsg returned no Play command")
-		}
-
-		result := make(chan tea.Msg, 16)
-		runAsyncCmd(playCmd, result)
-		select {
-		case <-bp.started:
-		case <-time.After(time.Second):
-			t.Fatal("Play command did not call Play")
-		}
-		close(bp.release)
-
-		deadline := time.After(2 * time.Second)
-		seenResult := false
-		for !seenResult {
-			select {
-			case msg := <-result:
-				if _, ok := msg.(transportResultMsg); ok {
-					seenResult = true
-				}
-				next, follow := m.Update(msg)
-				m = next.(*Model)
-				if follow != nil {
-					runAsyncCmd(follow, result)
-				}
-			case <-deadline:
-				t.Fatal("Play command did not return")
+			next, follow := m.Update(msg)
+			m = next.(*Model)
+			if follow != nil {
+				runAsyncCmd(follow, result)
 			}
+		case <-deadline:
+			t.Fatal("preview command did not return")
 		}
-		if !m.statusIsError {
-			t.Error("statusIsError = false after failed play")
-		}
-		if !strings.Contains(m.statusMsg, "decoder failed") {
-			t.Errorf("statusMsg = %q, want decoder failure", m.statusMsg)
-		}
-	})
+	}
+	if bp.calls != 1 {
+		t.Errorf("Play calls = %d, want 1", bp.calls)
+	}
+	if !m.previewActive {
+		t.Error("previewActive = false, want true")
+	}
+	if m.statusIsError {
+		t.Errorf("statusIsError = true after successful preview: %q", m.statusMsg)
+	}
+	if !strings.Contains(m.statusMsg, "previewing") {
+		t.Errorf("statusMsg = %q, want previewing status", m.statusMsg)
+	}
 }
 
 func TestBrowserDownMovesOneEntry(t *testing.T) {

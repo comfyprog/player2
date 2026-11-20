@@ -32,16 +32,6 @@ type browserLoadedMsg struct {
 	focus     string
 }
 
-// browserPlayMsg is the result of building a queue for a selection.
-type browserPlayMsg struct {
-	gen      uint64
-	seq      uint64
-	items    []queue.Item
-	selected int
-	status   string
-	err      error
-}
-
 // browserAddMsg is the result of expanding a selection into queue items.
 type browserAddMsg struct {
 	gen    uint64
@@ -632,63 +622,9 @@ func (m *Model) browserOpen() tea.Cmd {
 		m.setStatusError(message)
 		return nil
 	case library.KindAudio, library.KindCueTrack:
-		return m.playLevel(entry)
+		return m.browserPreview()
 	default:
 		return nil
-	}
-}
-
-// playLevel replaces the queue with every playable item at the current level
-// and starts at entry. Playlists are played only when selected directly;
-// invalid CUEs and playlists are skipped here.
-func (m *Model) playLevel(entry library.Entry) tea.Cmd {
-	gen := m.browserGen
-	seq := m.beginPlaybackIntent()
-	scanner := m.scanner
-	entries := append([]library.Entry(nil), m.browserEntries...)
-	cue := m.browserContainer == library.KindCueDir
-	selected := indexOfEntry(entries, entry)
-
-	return func() tea.Msg {
-		ctx := context.Background()
-		items, start, err := buildLevelItems(ctx, scanner, entries, selected, cue)
-		if err != nil {
-			return browserPlayMsg{gen: gen, seq: seq, err: err, status: err.Error()}
-		}
-		if len(items) == 0 {
-			return browserPlayMsg{gen: gen, seq: seq, status: "nothing to play"}
-		}
-		return browserPlayMsg{
-			gen:      gen,
-			seq:      seq,
-			items:    items,
-			selected: start,
-			status:   summariseQueue("playing", items, 0),
-		}
-	}
-}
-
-// playPlaylist expands a playlist and plays it from its first item.
-func (m *Model) playPlaylist(path string) tea.Cmd {
-	gen := m.browserGen
-	seq := m.beginPlaybackIntent()
-	scanner := m.scanner
-
-	return func() tea.Msg {
-		items, skipped, err := loadPlaylistItems(context.Background(), scanner, path)
-		if err != nil {
-			return browserPlayMsg{gen: gen, seq: seq, err: err, status: fmt.Sprintf("playlist %s: %v", filepath.Base(path), err)}
-		}
-		if len(items) == 0 {
-			return browserPlayMsg{gen: gen, seq: seq, status: "nothing to play"}
-		}
-		return browserPlayMsg{
-			gen:      gen,
-			seq:      seq,
-			items:    items,
-			selected: 0,
-			status:   summariseQueue("playing", items, skipped),
-		}
 	}
 }
 
@@ -795,59 +731,6 @@ func (m *Model) singleAdd(item queue.Item) tea.Cmd {
 		items := []queue.Item{item}
 		return browserAddMsg{gen: gen, items: items, status: summariseQueue("added", items, 0)}
 	}
-}
-
-// applyBrowserPlay installs the replacement queue and returns a command that
-// starts playback. Play is blocking (it opens a decoder subprocess), so it must
-// run in a Bubble Tea command rather than in Update.
-func (m *Model) applyBrowserPlay(msg browserPlayMsg) tea.Cmd {
-	if msg.gen != m.browserGen || msg.seq != m.playSeq {
-		return nil
-	}
-	if msg.err != nil {
-		status := msg.status
-		if status == "" {
-			status = msg.err.Error()
-		}
-		m.setStatusError(status)
-		return nil
-	}
-	if len(msg.items) == 0 {
-		m.setStatusOK("nothing to play")
-		return nil
-	}
-
-	// A replacement queue starts with fresh item IDs and an unfiltered view.
-	m.clearPreview()
-	m.clearTabProbes(m.activeTab)
-	m.clearPlaylistFilter()
-	m.queue.Replace(msg.items...)
-	selected := msg.selected
-	if selected < 0 || selected >= len(msg.items) {
-		selected = 0
-	}
-	m.queue.SetCurrent(selected)
-	m.bumpQueueEpoch()
-	m.playlistSelected = selected
-	m.clampPlaylist()
-
-	// Probing and persistence belong to the queue replacement, not to the
-	// playback startup, so start them before Play can block on a decoder.
-	queueWork := m.afterQueueChange()
-
-	player := m.player
-	item, ok := m.queue.Current()
-	if player == nil || !ok {
-		m.setStatusOK(msg.status)
-		return queueWork
-	}
-
-	play := m.playItem(m.activeTab, item, msg.status)
-	if play == nil {
-		m.setStatusOK(msg.status)
-		return queueWork
-	}
-	return tea.Batch(play, queueWork)
 }
 
 // applyBrowserAdd appends expanded items to the existing queue.
@@ -1017,68 +900,6 @@ func printableKeyText(msg tea.KeyPressMsg) (string, bool) {
 		}
 	}
 	return text, true
-}
-
-// buildLevelItems expands the current level in listing order. CUE folders
-// contribute their tracks in place; playlists and invalid CUEs are skipped.
-func buildLevelItems(ctx context.Context, scanner Scanner, entries []library.Entry, selectedIndex int, cue bool) ([]queue.Item, int, error) {
-	items := make([]queue.Item, 0, len(entries))
-	selected := 0
-
-	if cue {
-		for index, entry := range entries {
-			if entry.Kind != library.KindCueTrack {
-				continue
-			}
-			if index == selectedIndex {
-				selected = len(items)
-			}
-			items = append(items, queueItemFromEntry(entry))
-		}
-	} else {
-		for index, entry := range entries {
-			switch entry.Kind {
-			case library.KindAudio:
-				if index == selectedIndex {
-					selected = len(items)
-				}
-				items = append(items, queueItemFromEntry(entry))
-			case library.KindCueDir:
-				if index == selectedIndex {
-					selected = len(items)
-				}
-				if scanner == nil {
-					continue
-				}
-				tracks, err := scanner.ReadCue(ctx, entry.Path)
-				if err != nil {
-					return nil, 0, err
-				}
-				for _, track := range tracks {
-					items = append(items, queueItemFromEntry(track))
-				}
-			}
-		}
-	}
-
-	if len(items) == 0 {
-		return items, 0, nil
-	}
-	if selected < 0 || selected >= len(items) {
-		selected = 0
-	}
-	return items, selected, nil
-}
-
-// indexOfEntry finds an entry in a listing by its identity.
-func indexOfEntry(entries []library.Entry, target library.Entry) int {
-	key := entryKey(target)
-	for index, entry := range entries {
-		if entryKey(entry) == key {
-			return index
-		}
-	}
-	return -1
 }
 
 // queueItemFromEntry builds a queue item from a scanner entry. CUE tracks

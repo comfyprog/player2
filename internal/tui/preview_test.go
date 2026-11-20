@@ -67,40 +67,6 @@ func TestSeekReplacingPendingPreviewClearsPreview(t *testing.T) {
 	}
 }
 
-func TestAutoAdvanceDoesNotCancelPendingLevelPlay(t *testing.T) {
-	m, _ := newBrowserModel(t, &testScanner{})
-	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute), playlistItem("Next", "Artist", 2, time.Minute))
-	m.queue.SetCurrent(0)
-	m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
-
-	// Enter starts an async level build.
-	next, pendingLevel := pressForCmd(t, m, specialKey(tea.KeyEnter))
-	m = next
-	if pendingLevel == nil {
-		t.Fatal("Enter returned no level build command")
-	}
-
-	// The old queue track finishes and auto-advances while that build runs.
-	queued, _ := m.queue.Current()
-	autoAdvance := m.handlePlayerEvent(playerEventMsg{
-		event: player.Event{Type: player.EventFinished, ItemID: queued.ID},
-		ok:    true,
-	})
-	m = runCmd(t, m, autoAdvance)
-
-	// The explicit level build must still win over the automatic advance.
-	updated, playCmd := m.Update(pendingLevel())
-	m = updated.(*Model)
-	m = runCmd(t, m, playCmd)
-
-	if got := len(m.queue.Snapshot().Items); got != 1 {
-		t.Fatalf("queue length = %d, want explicit level build to replace queue", got)
-	}
-	if item, _ := m.queue.Current(); item.Title != "song" {
-		t.Errorf("queue current = %q, want song", item.Title)
-	}
-}
-
 func TestPreviewHeaderAndProgressUsePreviewItem(t *testing.T) {
 	m, _ := newBrowserModel(t, &testScanner{})
 	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute))
@@ -326,29 +292,32 @@ func TestBrowserPreviewIgnoresNonTracks(t *testing.T) {
 	}
 }
 
-func TestNormalPlayClearsPreview(t *testing.T) {
+func TestPlaylistPlayClearsPreview(t *testing.T) {
 	m, fp := newBrowserModel(t, &testScanner{})
-	m.browserEntries = []library.Entry{
-		audioEntry("song.flac", "/music/song.flac"),
-		audioEntry("other.flac", "/music/other.flac"),
-	}
+	m.queue.Append(
+		playlistItem("Alpha", "Artist", 1, time.Minute),
+		playlistItem("Beta", "Artist", 2, time.Minute),
+	)
+	m.queue.SetCurrent(0)
+	m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
 
 	m = startTestPreview(t, m)
-	m.browserSelected = 1
+	m.focus = PanePlaylist
+	m.playlistSelected = 1
 	next, cmd := pressForCmd(t, m, specialKey(tea.KeyEnter))
 	m = next
 	m = runCmd(t, m, cmd)
 
-	if got := len(m.queue.Snapshot().Items); got != 2 {
-		t.Fatalf("queue length = %d after normal play, want 2", got)
-	}
 	if got := len(fp.played); got != 2 {
 		t.Fatalf("Play calls = %d, want preview + queue play", got)
 	}
-	if item, _ := m.queue.Current(); item.Title != "other" {
-		t.Errorf("queue current = %q, want other", item.Title)
+	if item, _ := m.queue.Current(); item.Title != "Beta" {
+		t.Errorf("queue current = %q, want Beta", item.Title)
 	}
-	if label := m.nowPlayingLabel(); !strings.Contains(label, "other") {
+	if m.previewActive {
+		t.Error("previewActive = true after playlist play, want false")
+	}
+	if label := m.nowPlayingLabel(); !strings.Contains(label, "Beta") {
 		t.Errorf("now playing label = %q, want queue item", label)
 	}
 }
@@ -381,35 +350,6 @@ func TestPreviewMetadataProbeUpdatesOnlyPreview(t *testing.T) {
 	}
 	if got := store.saveCount(); got != 0 {
 		t.Errorf("queue saves = %d, want 0", got)
-	}
-}
-
-func TestStaleLevelPlayDoesNotReplacePreview(t *testing.T) {
-	m, fp := newBrowserModel(t, &testScanner{})
-	m.browserEntries = []library.Entry{
-		audioEntry("first.flac", "/music/first.flac"),
-		audioEntry("second.flac", "/music/second.flac"),
-	}
-
-	next, stalePlay := pressForCmd(t, m, specialKey(tea.KeyEnter))
-	m = next
-	if stalePlay == nil {
-		t.Fatal("Enter returned no level build command")
-	}
-
-	m.browserSelected = 1
-	m = startTestPreview(t, m)
-	updated, _ := m.Update(stalePlay())
-	m = updated.(*Model)
-
-	if got := len(m.queue.Snapshot().Items); got != 0 {
-		t.Errorf("stale level play replaced queue with %d items", got)
-	}
-	if got := len(fp.played); got != 1 {
-		t.Errorf("Play calls = %d, want preview only", got)
-	}
-	if label := m.nowPlayingLabel(); !strings.Contains(label, "second") {
-		t.Errorf("now playing label = %q, want preview still active", label)
 	}
 }
 

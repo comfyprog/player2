@@ -26,8 +26,8 @@ type previewMetadataMsg struct {
 }
 
 // browserPreview handles the preview action at the browser. Only playable
-// tracks have a one-off preview; directories and playlists keep their normal
-// open behavior.
+// tracks can be previewed; directories, CUE folders, and playlist folders are
+// opened instead.
 func (m *Model) browserPreview() tea.Cmd {
 	if m.browserLoading {
 		return nil
@@ -176,8 +176,9 @@ func (m *Model) playbackItem() (queue.Item, bool) {
 	return m.queue.Current()
 }
 
-// beginPlaybackIntent invalidates asynchronous level/playlist builds started
-// before this request.
+// beginPlaybackIntent records a new playback intent and returns its sequence.
+// The sequence lets asynchronous playback work started earlier recognise that
+// a newer request has superseded it.
 func (m *Model) beginPlaybackIntent() uint64 {
 	m.playSeq++
 	return m.playSeq

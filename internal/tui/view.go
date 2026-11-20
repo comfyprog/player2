@@ -273,7 +273,7 @@ func (m *Model) hintsLine() string {
 		{ActionHelp, "help"},
 		{ActionInfo, "info"},
 		{ActionSwitchPane, "pane"},
-		{ActionOpen, "play"},
+		{ActionOpen, "open"},
 		{ActionAdd, "add"},
 		{ActionPause, "pause"},
 		{ActionSearch, "search"},
