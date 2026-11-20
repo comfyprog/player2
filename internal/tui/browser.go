@@ -146,25 +146,35 @@ func (m *Model) browserLines(width, height int) []string {
 			break
 		}
 		entry := visible[index]
+		previewing := m.previewingEntry(entry)
 		style := m.browserEntryStyle(entry.Kind, index == selected)
-		lines[row+1] = style.Render(m.browserRow(entry, width))
+		if previewing && index != selected {
+			style = m.styles.Playing
+		}
+		lines[row+1] = style.Render(m.browserRow(entry, width, previewing))
 	}
 	return lines
 }
 
 // browserRow formats one browser row. CUE tracks show their duration
 // right-aligned, matching the playlist and the CUE acceptance criteria; other
-// entries show their filename or, in tag mode, their embedded metadata. The
+// entries show their filename or, in tag mode, their embedded metadata. Every
+// non-bookmark row reserves a two-cell gutter for the preview marker. The
 // result is exactly width cells.
-func (m *Model) browserRow(entry library.Entry, width int) string {
+func (m *Model) browserRow(entry library.Entry, width int, previewing bool) string {
 	if width <= 0 {
 		return ""
 	}
 	if m.browserBookmarks {
 		return fitPlain(truncateLeft(entry.Name, width), width)
 	}
+
+	marker := "  "
+	if previewing {
+		marker = playingMarker + " "
+	}
 	if entry.Kind != library.KindCueTrack {
-		return fitPlain(m.browserEntryLabel(entry), width)
+		return fitPlain(marker+m.browserEntryLabel(entry), width)
 	}
 
 	right := "--:--"
@@ -180,7 +190,7 @@ func (m *Model) browserRow(entry library.Entry, width int) string {
 	if leftWidth <= 0 {
 		return strings.Repeat(" ", width-rightWidth) + right
 	}
-	return fitPlain(entry.Name, leftWidth) + " " + right
+	return fitPlain(marker+entry.Name, leftWidth) + " " + right
 }
 
 // browserEntryLabel returns the text shown for one entry. Tag mode applies to

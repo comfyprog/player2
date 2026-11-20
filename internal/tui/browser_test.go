@@ -452,10 +452,10 @@ func TestBrowserTagRowsShowTrackTitleAlbumAndArtist(t *testing.T) {
 
 	lines := m.browserLines(80, len(entries)+1)
 	wants := []string{
-		"01. Opening — Record — Band",
-		"02. Interlude",
-		"track03.mp3",
-		"track04 — Guest",
+		"  01. Opening — Record — Band",
+		"  02. Interlude",
+		"  track03.mp3",
+		"  track04 — Guest",
 	}
 	for i, want := range wants {
 		got := strings.TrimRight(ansi.Strip(lines[i+1]), " ")
@@ -494,7 +494,7 @@ func TestBrowserToggleTagsSwitchesLabelsAndStatusIndicator(t *testing.T) {
 	if plain := ansi.Strip(m.statusLine()); !strings.Contains(plain, "[FILENAME]") {
 		t.Fatalf("default status line = %q, want [FILENAME]", plain)
 	}
-	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "track01.mp3" {
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "  track01.mp3" {
 		t.Fatalf("default row = %q, want filename", row)
 	}
 
@@ -505,7 +505,7 @@ func TestBrowserToggleTagsSwitchesLabelsAndStatusIndicator(t *testing.T) {
 	if plain := ansi.Strip(m.statusLine()); !strings.Contains(plain, "[TAG]") {
 		t.Errorf("tag status line = %q, want [TAG]", plain)
 	}
-	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "01. Opening — Record — Band" {
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "  01. Opening — Record — Band" {
 		t.Errorf("tag row = %q, want tags", row)
 	}
 
@@ -516,7 +516,7 @@ func TestBrowserToggleTagsSwitchesLabelsAndStatusIndicator(t *testing.T) {
 	if plain := ansi.Strip(m.statusLine()); !strings.Contains(plain, "[FILENAME]") {
 		t.Errorf("restored status line = %q, want [FILENAME]", plain)
 	}
-	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "track01.mp3" {
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "  track01.mp3" {
 		t.Errorf("restored row = %q, want filename", row)
 	}
 }
@@ -548,7 +548,7 @@ func TestBrowserToggleTagsProbesPlainAudioOnly(t *testing.T) {
 	if got := prober.calls[0]; got != "/music/a.mp3" {
 		t.Errorf("probed %q, want /music/a.mp3", got)
 	}
-	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "04. Tagged — Record — Band" {
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "  04. Tagged — Record — Band" {
 		t.Errorf("tag row after probe = %q", row)
 	}
 }
@@ -621,7 +621,7 @@ func TestBrowserIgnoresStaleTagProbeResults(t *testing.T) {
 		info: meta.Info{TrackNo: 1, Title: "Stale", Album: "Old", Artist: "Band"},
 	})
 	m = next.(*Model)
-	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "a.mp3" {
+	if row := strings.TrimRight(ansi.Strip(m.browserLines(40, 2)[1]), " "); row != "  a.mp3" {
 		t.Errorf("stale probe changed row to %q", row)
 	}
 }

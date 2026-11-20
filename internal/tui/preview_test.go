@@ -191,6 +191,87 @@ func TestPreviewAutoAdvancesThroughBrowserListing(t *testing.T) {
 	}
 }
 
+func TestBrowserPreviewMarkerFollowsAdvance(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.browserEntriesPath = "/music"
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+	}
+	m.browserSelected = 0
+
+	m = startTestPreview(t, m)
+	lines := m.browserLines(80, 20)
+	first := ansi.Strip(lines[1])
+	second := ansi.Strip(lines[2])
+	if !strings.HasPrefix(first, "▶ ") {
+		t.Fatalf("first row = %q, want preview marker", first)
+	}
+	if strings.HasPrefix(second, "▶") {
+		t.Fatalf("second row = %q, want a blank gutter before advance", second)
+	}
+
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: fp.played[0].ID},
+		ok:    true,
+	})
+	m = runCmd(t, m, cmd)
+
+	lines = m.browserLines(80, 20)
+	first = ansi.Strip(lines[1])
+	second = ansi.Strip(lines[2])
+	if strings.HasPrefix(first, "▶") {
+		t.Errorf("first row = %q, want the marker to advance away", first)
+	}
+	if !strings.HasPrefix(second, "▶ ") {
+		t.Errorf("second row = %q, want the preview marker after advance", second)
+	}
+	if m.browserSelected != 0 {
+		t.Errorf("browser selection = %d, want 0", m.browserSelected)
+	}
+}
+
+func TestBrowserPreviewMarkerClearsOutsideSource(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserEntriesPath = "/music"
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+	}
+	m.browserSelected = 0
+
+	m = startTestPreview(t, m)
+
+	m.browserEntriesPath = "/elsewhere"
+	for i, line := range m.browserLines(80, 20) {
+		plain := ansi.Strip(line)
+		if strings.Contains(plain, "▶") {
+			t.Errorf("line %d = %q, want no preview marker outside the source listing", i, plain)
+		}
+	}
+}
+
+func TestBrowserPreviewCueRowMarkerKeepsDuration(t *testing.T) {
+	m, _ := newBrowserModel(t, &testScanner{})
+	m.browserEntriesPath = "/music"
+	entry := cueTrackEntry("02. Two — Artist", "/music/song.flac", "/music/Album.cue", 2, 3*time.Minute, 2*time.Minute)
+	m.browserEntries = []library.Entry{entry}
+	m.browserSelected = 0
+
+	m = startTestPreview(t, m)
+
+	row := ansi.Strip(m.browserLines(40, 2)[1])
+	if !strings.Contains(row, "▶") {
+		t.Errorf("CUE row = %q, want preview marker", row)
+	}
+	if !strings.Contains(row, "2:00") {
+		t.Errorf("CUE row = %q, want the right-aligned duration", row)
+	}
+	if got := ansi.StringWidth(row); got != 40 {
+		t.Errorf("CUE row width = %d, want 40", got)
+	}
+}
+
 func TestPreviewStopsAfterLastWithRepeatOff(t *testing.T) {
 	m, fp := newBrowserModel(t, &testScanner{})
 	m.browserEntries = []library.Entry{

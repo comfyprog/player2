@@ -25,6 +25,21 @@ type previewMetadataMsg struct {
 	err  error
 }
 
+// previewingEntry reports whether entry is the row currently previewing. The
+// marker only applies while the browser still shows the listing that started
+// the preview, so leaving that listing clears it without touching the session.
+func (m *Model) previewingEntry(entry library.Entry) bool {
+	if !m.previewActive || m.previewSource != m.browserEntriesPath {
+		return false
+	}
+	preview := library.Entry{
+		Path:    m.previewItem.Path,
+		CuePath: m.previewItem.CuePath,
+		TrackNo: m.previewItem.CueTrack,
+	}
+	return entryKey(entry) == entryKey(preview)
+}
+
 // browserPreview handles the preview action at the browser. Only playable
 // tracks start a preview; directories, CUE folders, and playlist folders are
 // opened instead. The preview covers every playable row in the visible
