@@ -200,13 +200,17 @@ type Model struct {
 	// in-memory one.
 	restorePending bool
 
-	// preview is one-off playback of a browser track outside the queue.
-	// previewSeq hands out IDs from the top of the uint64 range so a preview
-	// item cannot collide with a queue item. playSeq identifies the latest
-	// playback intent so older asynchronous playback work cannot overwrite a
-	// newer request.
+	// preview is playback of a browser listing outside the real queue.
+	// previewQueue is a private queue over the playable rows that started the
+	// preview; previewSource records the listing path that started it so later
+	// rendering can match the preview row. previewSeq hands out IDs from the top
+	// of the uint64 range so a preview item cannot collide with a queue item.
+	// playSeq identifies the latest playback intent so older asynchronous
+	// playback work cannot overwrite a newer request.
 	previewActive bool
 	previewItem   queue.Item
+	previewQueue  *queue.Queue
+	previewSource string
 	previewSeq    uint64
 	playSeq       uint64
 }

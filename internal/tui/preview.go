@@ -26,8 +26,9 @@ type previewMetadataMsg struct {
 }
 
 // browserPreview handles the preview action at the browser. Only playable
-// tracks can be previewed; directories, CUE folders, and playlist folders are
-// opened instead.
+// tracks start a preview; directories, CUE folders, and playlist folders are
+// opened instead. The preview covers every playable row in the visible
+// listing, starting at the selected one.
 func (m *Model) browserPreview() tea.Cmd {
 	if m.browserLoading {
 		return nil
@@ -38,19 +39,70 @@ func (m *Model) browserPreview() tea.Cmd {
 	}
 	switch entry.Kind {
 	case library.KindAudio, library.KindCueTrack:
-		return m.startPreview(entry)
 	default:
 		return nil
 	}
-}
 
-// startPreview starts one track outside the queue. The queue, its current
-// item, shuffle/repeat settings, and persistence are left untouched.
-func (m *Model) startPreview(entry library.Entry) tea.Cmd {
-	if m.player == nil {
+	visible := m.browserVisibleEntries()
+	entries := make([]library.Entry, 0, len(visible))
+	selected := -1
+	for index, candidate := range visible {
+		switch candidate.Kind {
+		case library.KindAudio, library.KindCueTrack:
+		default:
+			continue
+		}
+		if index == m.browserSelected {
+			selected = len(entries)
+		}
+		entries = append(entries, candidate)
+	}
+	if selected < 0 {
 		return nil
 	}
-	item := queueItemFromEntry(entry)
+	return m.startPreview(entries, selected)
+}
+
+// startPreview starts a preview session over entries, beginning at selected.
+// The session uses a private queue seeded with the real queue's shuffle and
+// repeat modes; the real queue, its current item, and persistence are left
+// untouched.
+func (m *Model) startPreview(entries []library.Entry, selected int) tea.Cmd {
+	if m.player == nil || len(entries) == 0 {
+		return nil
+	}
+
+	q := queue.New()
+	for _, entry := range entries {
+		q.Append(queueItemFromEntry(entry))
+	}
+	snapshot := m.queue.Snapshot()
+	q.SetShuffle(snapshot.Shuffle)
+	q.SetRepeat(snapshot.Repeat)
+	if !q.SetCurrent(selected) {
+		return nil
+	}
+
+	m.previewQueue = q
+	m.previewSource = m.browserEntriesPath
+	m.previewActive = true
+	return m.playPreviewCurrent()
+}
+
+// playPreviewCurrent starts the preview queue's current item as a fresh
+// high-range preview item. It clears the sounding tab so queue auto-advance
+// cannot claim the preview stream.
+func (m *Model) playPreviewCurrent() tea.Cmd {
+	if m.previewQueue == nil {
+		m.clearPreview()
+		return nil
+	}
+	item, ok := m.previewQueue.Current()
+	if !ok {
+		m.clearPreview()
+		return nil
+	}
+
 	m.previewSeq++
 	item.ID = ^uint64(0) - (m.previewSeq - 1)
 	m.previewItem = item
@@ -71,6 +123,35 @@ func (m *Model) startPreview(entry library.Entry) tea.Cmd {
 		return nil
 	}
 	return tea.Batch(play, probe)
+}
+
+// advancePreview moves to the next item in the preview queue, honouring the
+// visible tab's current shuffle and repeat modes. It ends the session when the
+// preview set is exhausted.
+func (m *Model) advancePreview() tea.Cmd {
+	m.syncPreviewModes()
+	if m.previewQueue == nil {
+		m.clearPreview()
+		m.setStatusOK("preview finished")
+		return nil
+	}
+	if _, ok := m.previewQueue.Next(true); !ok {
+		m.clearPreview()
+		m.setStatusOK("preview finished")
+		return nil
+	}
+	return m.playPreviewCurrent()
+}
+
+// syncPreviewModes copies the visible tab's shuffle and repeat settings into
+// the preview queue so live s/r changes apply to the running session.
+func (m *Model) syncPreviewModes() {
+	if m.previewQueue == nil {
+		return
+	}
+	snapshot := m.queue.Snapshot()
+	m.previewQueue.SetShuffle(snapshot.Shuffle)
+	m.previewQueue.SetRepeat(snapshot.Repeat)
 }
 
 // previewProbeCmd probes a preview item that lacks usable metadata. Results
@@ -142,8 +223,7 @@ func (m *Model) handlePreviewEvent(msg playerEventMsg) (tea.Cmd, bool) {
 	m.refresh()
 	switch msg.event.Type {
 	case player.EventFinished:
-		m.clearPreview()
-		m.setStatusOK("preview finished")
+		return m.advancePreview(), true
 	case player.EventError:
 		err := msg.event.Err
 		if err == nil {
@@ -155,11 +235,13 @@ func (m *Model) handlePreviewEvent(msg playerEventMsg) (tea.Cmd, bool) {
 	return nil, true
 }
 
-// clearPreview forgets the one-off item. It does not stop the player; callers
-// that need silence use stopPlayback.
+// clearPreview forgets the preview session and its item. It does not stop the
+// player; callers that need silence use stopPlayback.
 func (m *Model) clearPreview() {
 	m.previewActive = false
 	m.previewItem = queue.Item{}
+	m.previewQueue = nil
+	m.previewSource = ""
 }
 
 // playbackItem returns the item currently producing sound: the preview when

@@ -147,33 +147,198 @@ func TestBrowserPreviewCueTrack(t *testing.T) {
 	}
 }
 
-func TestPreviewFinishStopsWithoutAdvancingQueue(t *testing.T) {
+func TestPreviewAutoAdvancesThroughBrowserListing(t *testing.T) {
 	m, fp := newBrowserModel(t, &testScanner{})
 	m.queue.Append(playlistItem("Queued", "Artist", 1, time.Minute), playlistItem("Next", "Artist", 2, time.Minute))
 	m.queue.SetCurrent(0)
-	m.queue.SetRepeat(queue.RepeatOne)
-	m.browserEntries = []library.Entry{audioEntry("song.flac", "/music/song.flac")}
+	before := m.queue.Snapshot()
+	store := m.store.(*fakeStore)
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+		audioEntry("three.flac", "/music/three.flac"),
+	}
+	m.browserSelected = 0
 
 	m = startTestPreview(t, m)
-	previewID := fp.played[0].ID
-	if cmd := m.handlePlayerEvent(playerEventMsg{
-		event: player.Event{Type: player.EventFinished, ItemID: previewID},
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: fp.played[0].ID},
 		ok:    true,
-	}); cmd != nil {
-		t.Fatalf("preview finish returned command %T, want nil", cmd)
+	})
+	m = runCmd(t, m, cmd)
+
+	if got := len(fp.played); got != 2 {
+		t.Fatalf("Play calls after finish = %d, want 2", got)
+	}
+	if got := fp.played[1].Path; got != "/music/two.flac" {
+		t.Errorf("advanced path = %q, want /music/two.flac", got)
+	}
+	if after := m.queue.Snapshot(); !snapshotsEqual(before, after) {
+		t.Errorf("queue changed during preview advance:\n before %+v\n after  %+v", before, after)
+	}
+	if got := store.saveCount(); got != 0 {
+		t.Errorf("queue saves = %d, want 0", got)
+	}
+	if m.browserSelected != 0 {
+		t.Errorf("browser selection = %d, want 0", m.browserSelected)
+	}
+	if !m.previewActive {
+		t.Error("previewActive = false, want the next preview track active")
+	}
+}
+
+func TestPreviewStopsAfterLastWithRepeatOff(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+		audioEntry("three.flac", "/music/three.flac"),
+	}
+	m.browserSelected = 2
+
+	m = startTestPreview(t, m)
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: fp.played[0].ID},
+		ok:    true,
+	})
+	if cmd != nil {
+		t.Fatalf("preview finish at end returned command %T, want nil", cmd)
 	}
 
 	if got := len(fp.played); got != 1 {
 		t.Errorf("Play calls after preview finish = %d, want 1", got)
 	}
-	if item, ok := m.queue.Current(); !ok || item.Title != "Queued" {
-		t.Errorf("queue current = %+v (ok=%v), want Queued", item, ok)
+	if m.previewActive {
+		t.Error("previewActive = true after last preview, want false")
 	}
-	if label := m.nowPlayingLabel(); !strings.Contains(label, "Queued") || strings.Contains(label, "song") {
-		t.Errorf("now playing label = %q, want queue item", label)
+	if m.statusMsg != "preview finished" {
+		t.Errorf("statusMsg = %q, want \"preview finished\"", m.statusMsg)
 	}
-	if !strings.Contains(m.statusMsg, "preview finished") {
-		t.Errorf("statusMsg = %q, want preview finished", m.statusMsg)
+}
+
+func TestPreviewRepeatOneReplaysSameTrack(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.queue.SetRepeat(queue.RepeatOne)
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+	}
+	m.browserSelected = 0
+
+	m = startTestPreview(t, m)
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+	first := fp.played[0]
+
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: first.ID},
+		ok:    true,
+	})
+	m = runCmd(t, m, cmd)
+
+	if got := len(fp.played); got != 2 {
+		t.Fatalf("Play calls after repeat-one finish = %d, want 2", got)
+	}
+	second := fp.played[1]
+	if second.Path != first.Path {
+		t.Errorf("replayed path = %q, want %q", second.Path, first.Path)
+	}
+	if second.ID == first.ID {
+		t.Errorf("replayed item ID = %d, want a fresh high-range ID", second.ID)
+	}
+	highRange := uint64(1) << 63
+	if first.ID < highRange || second.ID < highRange {
+		t.Errorf("preview IDs = %d/%d, want both in the high uint64 range", first.ID, second.ID)
+	}
+}
+
+func TestPreviewRepeatAllWraps(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.queue.SetRepeat(queue.RepeatAll)
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+	}
+	m.browserSelected = 1
+
+	m = startTestPreview(t, m)
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+	if got := fp.played[0].Path; got != "/music/two.flac" {
+		t.Fatalf("initial preview path = %q, want /music/two.flac", got)
+	}
+
+	cmd := m.handlePlayerEvent(playerEventMsg{
+		event: player.Event{Type: player.EventFinished, ItemID: fp.played[0].ID},
+		ok:    true,
+	})
+	m = runCmd(t, m, cmd)
+
+	if got := len(fp.played); got != 2 {
+		t.Fatalf("Play calls after repeat-all finish = %d, want 2", got)
+	}
+	if got := fp.played[1].Path; got != "/music/one.flac" {
+		t.Errorf("wrapped path = %q, want /music/one.flac", got)
+	}
+}
+
+func TestPreviewShuffleUsesPreviewSet(t *testing.T) {
+	m, fp := newBrowserModel(t, &testScanner{})
+	m.queue.SetShuffle(true)
+	m.queue.SetRepeat(queue.RepeatAll)
+	m.browserEntries = []library.Entry{
+		audioEntry("one.flac", "/music/one.flac"),
+		audioEntry("two.flac", "/music/two.flac"),
+		audioEntry("three.flac", "/music/three.flac"),
+	}
+	m.browserSelected = 0
+
+	m = startTestPreview(t, m)
+	if got := len(fp.played); got != 1 {
+		t.Fatalf("Play calls = %d, want 1", got)
+	}
+
+	for i := 0; i < 3; i++ {
+		current := fp.played[len(fp.played)-1]
+		cmd := m.handlePlayerEvent(playerEventMsg{
+			event: player.Event{Type: player.EventFinished, ItemID: current.ID},
+			ok:    true,
+		})
+		m = runCmd(t, m, cmd)
+	}
+
+	if got := len(fp.played); got != 4 {
+		t.Fatalf("Play calls after three finishes = %d, want 4", got)
+	}
+	available := map[string]bool{
+		"/music/one.flac":   true,
+		"/music/two.flac":   true,
+		"/music/three.flac": true,
+	}
+	seen := make(map[string]bool, 3)
+	for _, item := range fp.played[1:] {
+		if !available[item.Path] {
+			t.Errorf("shuffled path = %q, want one of the preview entries", item.Path)
+		}
+		if seen[item.Path] {
+			t.Errorf("shuffled path %q repeated before the set was exhausted", item.Path)
+		}
+		seen[item.Path] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("shuffled set = %v, want all three preview entries", seen)
+	}
+	if !m.previewActive {
+		t.Error("previewActive = false, want preview still active under repeat-all")
 	}
 }
 
